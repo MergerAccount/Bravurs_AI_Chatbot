@@ -1,0 +1,35 @@
+#1. Create a new chat session
+#You must run this first to get a valid session_id.
+POST http://localhost:5000/api/v1/session/create
+Content-Type: application/json
+
+#After running, copy the session_id from the JSON response and use it below
+
+#--------------------------------
+
+### 2. Send a message to the chatbot
+# Replace {{session_id}} with the session you got above.
+#user_input=What services does Bravur offer?&session_id={{session_id}}
+POST http://localhost:5000/api/v1/chat
+Content-Type: application/x-www-form-urlencoded
+
+user_input=What services does Bravur offer?&session_id=228
+
+
+#--------------------------------
+
+### 3. Submit feedback
+# You can rate from 1 (worst) to 5 (best), comment is optional.
+#session_id={{session_id}}&rating=5&comment=Awesome answer!
+POST http://localhost:5000/api/v1/feedback
+Content-Type: application/x-www-form-urlencoded
+
+session_id=228&rating=4&comment=Look similiar like Chatgpt.
+
+
+#--------------------------------
+
+### 4. Get chat history
+# Returns an array of all user and bot messages for a session
+# GET http://localhost:5000/api/v1/history?session_id={{session_id}}
+GET http://localhost:5000/api/v1/history?session_id=228

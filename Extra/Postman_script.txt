@@ -1,0 +1,107 @@
+{
+  "info": {
+    "name": "Bravur Chatbot API",
+    "description": "Test collection for chatbot API endpoints (v1).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Chat Session",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": ""
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/v1/session/create",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "v1", "session", "create"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Chat with Bot",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "user_input", "value": "What services does Bravur offer?", "type": "text" },
+            { "key": "session_id", "value": "{{session_id}}", "type": "text" }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/v1/chat",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "v1", "chat"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Submit Feedback",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "session_id", "value": "{{session_id}}", "type": "text" },
+            { "key": "rating", "value": "5", "type": "text" },
+            { "key": "comment", "value": "Great answer!" }
+          ]
+        },
+        "url": {
+          "raw": "http://localhost:5000/api/v1/feedback",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "v1", "feedback"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Message History",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:5000/api/v1/history?session_id={{session_id}}",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "5000",
+          "path": ["api", "v1", "history"],
+          "query": [
+            { "key": "session_id", "value": "{{session_id}}" }
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "session_id",
+      "value": ""
+    }
+  ]
+}

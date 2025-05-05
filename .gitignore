@@ -1,0 +1,58 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+
+# === Environment / Secrets ===
+.env
+.env.*
+*.secrets
+*.token
+*.key
+
+# === IDEs ===
+# JetBrains (PyCharm, IntelliJ)
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# === macOS junk ===
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# === Logs, caches, temp ===
+*.log
+*.cache
+logs/
+*.tmp
+*.bak
+
+# === Jupyter ===
+.ipynb_checkpoints/
+
+# === OS-generated ===
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# === Testing ===
+coverage/
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+
+# === Packaging ===
+*.egg
+*.egg-info/
+dist/
+build/
