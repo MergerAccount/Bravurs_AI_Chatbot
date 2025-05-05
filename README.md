@@ -10,6 +10,10 @@ cd Bravurs_AI_Chatbot
 ```
 
 ## Drag .env file into root directory (on Teams, deliverables folder)
+This project requires a `.env` file containing necessary API keys and database connection details.
+
+*   **Locate the `.env` file:** Please find this file in the shared location provided by the team (e.g., check the 'Deliverables' folder on Microsoft Teams or ask a team lead).
+*   **Place the file:** Copy or move the `.env` file directly into the root `Bravurs_AI_Chatbot` directory (this is the folder you cloned in Step 1 and then used `cd` to enter).
 
 ## Create a virtual environment
 ```bash
