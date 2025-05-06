@@ -138,11 +138,14 @@ def handle_meta_questions(user_input, session_id):
     return "I'm not sure what you're referring to. Could you clarify?"
 
 def company_info_handler(user_input, session_id=None):
+    # Handle meta questions like "what was my last question"
     if is_last_question_request(user_input) or "last answer" in user_input.lower() or "summarize" in user_input.lower():
         return handle_meta_questions(user_input, session_id)
 
     detected_intent = classify_intent(user_input)
+    recent_convo = get_recent_conversation(session_id)
 
+    # Handle request for human support
     if detected_intent == "Human Support Service Request":
         reply = (
             "For human support, contact us on WhatsApp at +31 6 12345678 or email support@bravur.com."
@@ -153,11 +156,7 @@ def company_info_handler(user_input, session_id=None):
             log_async(store_message, session_id, reply, "bot")
         return reply
 
-    recent_convo = get_recent_conversation(session_id)
-
-    if detected_intent == "Unknown":
-        return "I'm here to answer questions about Bravur and IT services. How can I help?"
-
+    # Handle IT Services & Trends questions using GPT
     if detected_intent == "IT Services & Trends":
         it_prompt = [
                         {"role": "system", "content": (
@@ -174,36 +173,43 @@ def company_info_handler(user_input, session_id=None):
             log_async(store_message, session_id, reply, "bot")
         return reply
 
-    # --- Search logic ---
-    search_results = hybrid_search(user_input, top_k=5)
-    if not search_results:
-        embedding = embed_query_cached(user_input)
-        if embedding:
-            search_results = semantic_search(embedding, top_k=5)
+    # Handle unknown intent with contextual guessing
+    contextual_guess = guess_contextual_meaning(user_input, session_id)
+    if contextual_guess:
+        reply = (
+            f"I'm not sure what you meant by that. But earlier you asked:\n\"{contextual_guess}\".\n"
+            "Would you like me to connect that to your current question?"
+        )
+    else:
+        # Use search fallback if no context is found
+        search_results = hybrid_search(user_input, top_k=5)
+        if not search_results:
+            embedding = embed_query_cached(user_input)
+            if embedding:
+                search_results = semantic_search(embedding, top_k=5)
 
-    if not search_results:
-        return "I couldn't find anything relevant in Bravur's data. Try rephrasing your question."
+        if search_results:
+            semantic_context = "\n\n".join([
+                f"Row ID: {row_id}\nTitle: {title}\nContent: {content}"
+                for row_id, title, content, _ in search_results
+            ])
 
-    semantic_context = "\n\n".join([
-        f"Row ID: {row_id}\nTitle: {title}\nContent: {content}"
-        for row_id, title, content, _ in search_results
-    ])
+            system_prompt = (
+                f"You are a helpful assistant for Bravur. "
+                f"Answer the user based on this information. Cite Row IDs used:\n\n{semantic_context}"
+            )
 
-    system_prompt = (
-        f"You are a helpful assistant for Bravur. "
-        f"Answer the user based on this information. Cite Row IDs used:\n\n{semantic_context}"
-    )
+            gpt_prompt = [{"role": "system", "content": system_prompt}] + recent_convo + [{"role": "user", "content": user_input}]
+            reply = gpt_cached_response("gpt-4o-mini", gpt_prompt).strip()
+            reply = strip_html_paragraphs(reply)
+        else:
+            reply = "I'm here to answer questions about Bravur and IT services. Could you rephrase or provide more detail?"
 
-    gpt_prompt = [{"role": "system", "content": system_prompt}] + recent_convo + [{"role": "user", "content": user_input}]
-    reply = gpt_cached_response("gpt-4o-mini", gpt_prompt).strip()
-    reply = strip_html_paragraphs(reply)
-
+    # Store and return the final reply
     if session_id:
         log_async(store_message, session_id, user_input, "user")
         log_async(store_message, session_id, reply, "bot")
-
     return reply
-
 
 def company_info_handler_streaming(user_input, session_id=None):
     detected_intent = classify_intent(user_input)
@@ -254,6 +260,24 @@ def company_info_handler_streaming(user_input, session_id=None):
     except Exception as e:
         logging.error(f"Streaming error: {e}")
         yield "\n[Error generating response]"
+
+def guess_contextual_meaning(user_input, session_id):
+    """
+    When the current question is vague (e.g. 'what about that?'),
+    try to find the previous user message that can help clarify it.
+    """
+    if not session_id:
+        return None
+
+    messages = get_session_messages(session_id)
+    messages.reverse()
+
+    for _, content, _, msg_type in messages:
+        if msg_type == "user" and not is_last_question_request(user_input):
+            ratio = fuzz.partial_ratio(user_input.lower(), content.lower())
+            if ratio < 60:  # This means input is probably *not* a repeat
+                return content
+    return None
 
 
 
