@@ -26,6 +26,25 @@ def create_session():
         return jsonify({"session_id": session_id})
     return jsonify({"error": "Failed to create session"}), 500
 
+@routes.route("/tts", methods=["POST"])
+def text_to_speech_api():
+    from app.speech import text_to_speech
+    data = request.get_json()
+    text = data.get("text", "")
+
+    if not text:
+        return jsonify({"error": "No text provided"}), 400
+
+    audio_path = text_to_speech(text)
+    if not audio_path:
+        return jsonify({"error": "TTS failed"}), 500
+
+    def generate():
+        with open(audio_path, "rb") as f:
+            yield from f
+
+    return Response(generate(), mimetype="audio/wav")
+
 
 frontend = Blueprint("frontend", __name__)
 
