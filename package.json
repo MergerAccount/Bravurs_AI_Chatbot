@@ -1,0 +1,27 @@
+{
+  "name": "bravurs_ai_chatbot",
+  "version": "1.0.0",
+  "description": "- PyCharm Installed or Install Python",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prepare": "husky install"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MergerAccount/Bravurs_AI_Chatbot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/MergerAccount/Bravurs_AI_Chatbot/issues"
+  },
+  "homepage": "https://github.com/MergerAccount/Bravurs_AI_Chatbot#readme",
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.0",
+    "@commitlint/config-conventional": "^19.8.0",
+    "husky": "^9.1.7"
+  }
+}
