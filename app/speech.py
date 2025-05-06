@@ -14,15 +14,16 @@ speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_r
 
 # Function to convert text to speech
 def text_to_speech(text):
+    output_path = "output.wav"
     speech_synthesizer = speechsdk.SpeechSynthesizer(
         speech_config=speech_config,
-        audio_config=speechsdk.audio.AudioOutputConfig(filename="output.wav")
+        audio_config=speechsdk.audio.AudioOutputConfig(filename=output_path)
     )
     result = speech_synthesizer.speak_text_async(text).get()
 
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         print("Speech synthesized successfully!")
-        return "output.wav"
+        return output_path
     else:
         print(f"Error: {result.reason}")
         return None
