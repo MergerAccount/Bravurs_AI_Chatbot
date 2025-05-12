@@ -10,7 +10,8 @@ from fuzzywuzzy import fuzz
 from app.config import OPENAI_API_KEY
 from app.database import (
     get_session_messages, store_message,
-    hybrid_search, semantic_search, embed_query
+    hybrid_search, semantic_search, embed_query,
+    get_latest_consulting_trends  # NEW CODE tag
 )
 from app.agentConnector import AgentConnector
 
@@ -73,12 +74,11 @@ def get_recent_conversation(session_id, max_tokens=400):
 
 def classify_intent(user_input: str) -> str:
     text = user_input.lower()
-    print("[DEBUG] classify_intent text:", text)  #debug print
+    print("[DEBUG] classify_intent text:", text)
 
-    if "mckinsey" in text and any(word in text for word in ["trend", "article", "insight", "report", "news", "day", "week"]):  # NEW CODE tag: McKinsey intent
-        print("[DEBUG] matched McKinsey Trend Request")  # debug log
+    if "mckinsey" in text and any(word in text for word in ["trend", "article", "insight", "report", "news", "day", "week"]):
+        print("[DEBUG] matched McKinsey Trend Request")
         return "McKinsey Trend Request"
-
 
     if any(word in text for word in ["contact", "human", "support", "agent", "real person"]):
         return "Human Support Service Request"
@@ -143,19 +143,25 @@ def handle_meta_questions(user_input, session_id):
 
     return "I'm not sure what you're referring to. Could you clarify?"
 
+def format_semantic_context(results):  # NEW CODE tag: extract duplicated logic
+    return "\n\n".join([
+        f"Row ID: {row_id}\nTitle: {title}\nContent: {content}"
+        for row_id, title, content, _ in results
+    ])
+
 def company_info_handler(user_input, session_id=None):
     if is_last_question_request(user_input) or "last answer" in user_input.lower() or "summarize" in user_input.lower():
         return handle_meta_questions(user_input, session_id)
 
     detected_intent = classify_intent(user_input)
-    print("[DEBUG] Detected intent:", detected_intent)  # NEW CODE tag
+    print("[DEBUG] Detected intent:", detected_intent)
 
-    if detected_intent == "McKinsey Trend Request":  # NEW CODE tag
-        reply = handle_mckinsey_trends(user_input)   # NEW CODE tag
-        if session_id:                               # NEW CODE tag
-            log_async(store_message, session_id, user_input, "user")  # NEW CODE tag
-            log_async(store_message, session_id, reply, "bot")        # NEW CODE tag
-        return reply                                  # NEW CODE tag
+    if detected_intent == "McKinsey Trend Request":
+        reply = handle_mckinsey_trends(user_input)
+        if session_id:
+            log_async(store_message, session_id, user_input, "user")
+            log_async(store_message, session_id, reply, "bot")
+        return reply
 
     if detected_intent == "Human Support Service Request":
         reply = (
@@ -188,7 +194,6 @@ def company_info_handler(user_input, session_id=None):
             log_async(store_message, session_id, reply, "bot")
         return reply
 
-    # --- Search logic ---
     search_results = hybrid_search(user_input, top_k=5)
     if not search_results:
         embedding = embed_query_cached(user_input)
@@ -198,10 +203,7 @@ def company_info_handler(user_input, session_id=None):
     if not search_results:
         return "I couldn't find anything relevant in Bravur's data. Try rephrasing your question."
 
-    semantic_context = "\n\n".join([
-        f"Row ID: {row_id}\nTitle: {title}\nContent: {content}"
-        for row_id, title, content, _ in search_results
-    ])
+    semantic_context = format_semantic_context(search_results)  # UPDATED
 
     system_prompt = (
         f"You are a helpful assistant for Bravur. "
@@ -220,6 +222,15 @@ def company_info_handler(user_input, session_id=None):
 
 def company_info_handler_streaming(user_input, session_id=None):
     detected_intent = classify_intent(user_input)
+    print("[DEBUG] Detected intent (streaming):", detected_intent)
+
+    if detected_intent == "McKinsey Trend Request":
+        reply = handle_mckinsey_trends(user_input)
+        if session_id:
+            log_async(store_message, session_id, user_input, "user")
+            log_async(store_message, session_id, reply, "bot")
+        yield reply
+        return
 
     if detected_intent == "Human Support Service Request":
         reply = (
@@ -240,10 +251,7 @@ def company_info_handler_streaming(user_input, session_id=None):
         if embedding:
             search_results = semantic_search(embedding, top_k=5)
 
-    semantic_context = "\n\n".join([
-        f"Row ID: {row_id}\nTitle: {title}\nContent: {content}"
-        for row_id, title, content, _ in search_results
-    ])
+    semantic_context = format_semantic_context(search_results)  # UPDATED
 
     system_prompt = (
         f"You are a helpful assistant for Bravur. "
@@ -268,8 +276,6 @@ def company_info_handler_streaming(user_input, session_id=None):
         logging.error(f"Streaming error: {e}")
         yield "\n[Error generating response]"
 
-
-
 agent_connector.register_agent("Bravur_Information_Agent", company_info_handler)
 
 @lru_cache(maxsize=256)
@@ -281,7 +287,6 @@ def gpt_cached_response(model, messages_as_tuple):
     )
     return response.choices[0].message.content
 
-# Extract how many days of trends user asked for
 def extract_days(user_input):
     match = re.search(r"(\d+)\s*(day|week)", user_input.lower())
     if match:
@@ -290,7 +295,6 @@ def extract_days(user_input):
         return number * 7 if unit == "week" else number
     return None
 
-# McKinsey trends handler
 def handle_mckinsey_trends(user_input=None):
     days = extract_days(user_input or "")
     entries = get_latest_consulting_trends(source="McKinsey", limit=5, since_days=days)
