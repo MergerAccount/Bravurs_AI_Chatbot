@@ -273,3 +273,33 @@ def gpt_cached_response(model, messages_as_tuple):
         messages=messages
     )
     return response.choices[0].message.content
+
+# Extract how many days of trends user asked for
+def extract_days(user_input):
+    match = re.search(r"(\d+)\s*(day|week)", user_input.lower())
+    if match:
+        number = int(match.group(1))
+        unit = match.group(2)
+        return number * 7 if unit == "week" else number
+    return None
+
+# McKinsey trends handler
+def handle_mckinsey_trends(user_input=None):
+    days = extract_days(user_input or "")
+    entries = get_latest_consulting_trends(source="McKinsey", limit=5, since_days=days)
+
+    if not entries:
+        return f"Sorry, I couldn't find any McKinsey trends in the past {days or 'few'} days."
+
+    lines = [f"<strong>Here are the latest McKinsey trends from the past {days or 'few'} days:</strong><br><br>"]
+
+    for idx, (title, summary, url, published_date) in enumerate(entries, 1):
+        summary_clean = summary.strip().replace("\n", " ").replace("\\n", " ")
+        lines.append(
+            f"{idx}. <strong>{title}</strong><br>"
+            f"{summary_clean[:300]}...<br>"
+            f"<em>Published: {published_date}</em><br>"
+            f"<a href=\"{url}\" target=\"_blank\" style=\"color:#1a0dab\">Read more</a><br><br>"
+        )
+
+    return "\n".join(lines)
