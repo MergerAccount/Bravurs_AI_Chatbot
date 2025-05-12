@@ -11,7 +11,7 @@ from app.config import OPENAI_API_KEY
 from app.database import (
     get_session_messages, store_message,
     hybrid_search, semantic_search, embed_query,
-    get_latest_consulting_trends  # NEW CODE tag
+    get_latest_consulting_trends
 )
 from app.agentConnector import AgentConnector
 
@@ -143,7 +143,7 @@ def handle_meta_questions(user_input, session_id):
 
     return "I'm not sure what you're referring to. Could you clarify?"
 
-def format_semantic_context(results):  # NEW CODE tag: extract duplicated logic
+def format_semantic_context(results):  # extract duplicated logic
     return "\n\n".join([
         f"Row ID: {row_id}\nTitle: {title}\nContent: {content}"
         for row_id, title, content, _ in results
