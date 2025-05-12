@@ -148,6 +148,14 @@ def company_info_handler(user_input, session_id=None):
         return handle_meta_questions(user_input, session_id)
 
     detected_intent = classify_intent(user_input)
+    print("[DEBUG] Detected intent:", detected_intent)  # NEW CODE tag
+
+    if detected_intent == "McKinsey Trend Request":  # NEW CODE tag
+        reply = handle_mckinsey_trends(user_input)   # NEW CODE tag
+        if session_id:                               # NEW CODE tag
+            log_async(store_message, session_id, user_input, "user")  # NEW CODE tag
+            log_async(store_message, session_id, reply, "bot")        # NEW CODE tag
+        return reply                                  # NEW CODE tag
 
     if detected_intent == "Human Support Service Request":
         reply = (
@@ -209,7 +217,6 @@ def company_info_handler(user_input, session_id=None):
         log_async(store_message, session_id, reply, "bot")
 
     return reply
-
 
 def company_info_handler_streaming(user_input, session_id=None):
     detected_intent = classify_intent(user_input)
