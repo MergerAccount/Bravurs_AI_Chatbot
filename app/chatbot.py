@@ -73,6 +73,12 @@ def get_recent_conversation(session_id, max_tokens=400):
 
 def classify_intent(user_input: str) -> str:
     text = user_input.lower()
+    print("[DEBUG] classify_intent text:", text)  #debug print
+
+    if "mckinsey" in text and any(word in text for word in ["trend", "article", "insight", "report", "news", "day", "week"]):  # NEW CODE tag: McKinsey intent
+        print("[DEBUG] matched McKinsey Trend Request")  # debug log
+        return "McKinsey Trend Request"
+
 
     if any(word in text for word in ["contact", "human", "support", "agent", "real person"]):
         return "Human Support Service Request"
