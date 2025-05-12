@@ -34,7 +34,6 @@ def fetch_relevant_info():
         cursor.close()
         conn.close()
 
-        # Format all rows into a readable block for GPT
         formatted_data = "\n".join(
             [f"Row ID: {row_id}\nCategory: {category}\nTitle: {title}\nContent: {content}\n"
              for row_id, category, title, content in rows]
@@ -187,7 +186,6 @@ def hybrid_search(query, top_k=5):
         if results:
             return results
 
-    # Fallback to full-text search using tsvector
     conn = get_db_connection()
     if conn is None:
         logging.error("No DB connection for fallback search")
@@ -255,3 +253,38 @@ def update_pending_embeddings():
         conn.close()
     except Exception as e:
         logging.error(f"Error during embedding update: {e}")
+
+# NEW CODE tag: Get latest McKinsey (or other source) consulting trends
+def get_latest_consulting_trends(source="McKinsey", limit=5, since_days=None):
+    conn = get_db_connection()
+    if conn is None:
+        return []
+
+    try:
+        cursor = conn.cursor()
+
+        if since_days:
+            cursor.execute("""
+                SELECT title, summary, url, published_date
+                FROM consulting_trends
+                WHERE source = %s AND published_date >= CURRENT_DATE - INTERVAL '%s days'
+                ORDER BY published_date DESC
+                LIMIT %s;
+            """, (source, since_days, limit))
+        else:
+            cursor.execute("""
+                SELECT title, summary, url, published_date
+                FROM consulting_trends
+                WHERE source = %s
+                ORDER BY published_date DESC
+                LIMIT %s;
+            """, (source, limit))
+
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return results
+    except Exception as e:
+        logging.error(f"Error fetching trends: {e}")
+        return []
+
