@@ -30,11 +30,14 @@ def insert_article(source, title, summary, url, published_date):
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO consulting_trends (source, title, summary, url, published_date, date_fetched)
-            VALUES (%s, %s, %s, %s, %s, NOW())
-            ON CONFLICT (url) DO UPDATE
-            SET published_date = EXCLUDED.published_date
-            WHERE consulting_trends.published_date IS NULL;
+        INSERT INTO consulting_trends (source, title, summary, url, published_date, date_fetched)
+        VALUES (%s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (url) DO UPDATE
+        SET
+            title = EXCLUDED.title,
+            summary = EXCLUDED.summary,
+            published_date = EXCLUDED.published_date,
+            date_fetched = NOW();
         """, (source, title.strip(), summary.strip(), url.strip(), published_date))
         conn.commit()
         cursor.close()

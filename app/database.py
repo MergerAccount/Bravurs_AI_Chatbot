@@ -254,8 +254,8 @@ def update_pending_embeddings():
     except Exception as e:
         logging.error(f"Error during embedding update: {e}")
 
-# NEW CODE tag: Get latest McKinsey (or other source) consulting trends
-def get_latest_consulting_trends(source="McKinsey", limit=5, since_days=None):
+# get latest McKinsey (or other source) consulting trends
+def get_latest_consulting_trends(source="McKinsey", limit=5, since_days=None, date_exact=None, keywords=None):
     conn = get_db_connection()
     if conn is None:
         return []
@@ -263,28 +263,49 @@ def get_latest_consulting_trends(source="McKinsey", limit=5, since_days=None):
     try:
         cursor = conn.cursor()
 
-        if since_days:
-            cursor.execute("""
-                SELECT title, summary, url, published_date
-                FROM consulting_trends
-                WHERE source = %s AND published_date >= CURRENT_DATE - INTERVAL '%s days'
-                ORDER BY published_date DESC
-                LIMIT %s;
-            """, (source, since_days, limit))
-        else:
-            cursor.execute("""
-                SELECT title, summary, url, published_date
-                FROM consulting_trends
-                WHERE source = %s
-                ORDER BY published_date DESC
-                LIMIT %s;
-            """, (source, limit))
+        # Debug query to see all dates in the table
+        cursor.execute("SELECT title, published_date FROM consulting_trends WHERE source = %s ORDER BY published_date DESC LIMIT 10;", (source,))
+        debug_results = cursor.fetchall()
+        logging.info(f"Debug: Raw dates in consulting_trends: {debug_results}")
 
+        conditions = ["source = %s"]
+        params = [source]
+
+        if since_days:
+            conditions.append("published_date >= CURRENT_DATE - INTERVAL %s DAY")
+            params.append(since_days)
+
+        if date_exact:
+            conditions.append("published_date = %s")
+            params.append(date_exact)
+
+        if keywords and not date_exact:
+            keyword_conditions = []
+            for kw in keywords:
+                keyword_conditions.append("(LOWER(title) LIKE %s OR LOWER(summary) LIKE %s)")
+                params.extend([f"%{kw.lower()}%"] * 2)
+            if keyword_conditions:
+                conditions.append("(" + " OR ".join(keyword_conditions) + ")")
+
+        where_clause = " AND ".join(conditions)
+        query = f"""
+                SELECT title, summary, url, published_date
+                FROM consulting_trends
+                WHERE {where_clause}
+                ORDER BY published_date DESC
+                LIMIT %s;
+            """
+        params.append(limit)
+
+        logging.info(f"Executing query: {query}")
+        logging.info(f"With parameters: {params}")
+        cursor.execute(query, params)
         results = cursor.fetchall()
+        logging.info(f"Retrieved {len(results)} results: {results}")
+
         cursor.close()
         conn.close()
         return results
     except Exception as e:
         logging.error(f"Error fetching trends: {e}")
         return []
-

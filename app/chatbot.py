@@ -2,6 +2,7 @@ import logging
 import re
 import json
 import threading
+import datetime
 from functools import lru_cache
 from hashlib import sha256
 from openai import OpenAI
@@ -14,6 +15,7 @@ from app.database import (
     get_latest_consulting_trends
 )
 from app.agentConnector import AgentConnector
+from dateutil import parser as date_parser
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 agent_connector = AgentConnector()
@@ -72,14 +74,27 @@ def get_recent_conversation(session_id, max_tokens=400):
 
     return selected
 
-def classify_intent(user_input: str) -> str:
+def classify_intent(user_input: str, session_id: str = None) -> str:
     text = user_input.lower()
     print("[DEBUG] classify_intent text:", text)
 
+    # Check if it's a McKinsey trend request
     if "mckinsey" in text and any(word in text for word in ["trend", "article", "insight", "report", "news", "day", "week"]):
-        print("[DEBUG] matched McKinsey Trend Request")
+        print("[DEBUG] matched McKinsey Trend Request (initial)")
         return "McKinsey Trend Request"
 
+    # Check for follow-up McKinsey trend request with date context
+    import re
+    date_pattern = r"\b(\d{1,2})\s*(?:-?\s*)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
+    if re.search(date_pattern, text) and session_id:
+        from app.database import get_session_messages
+        recent_messages = get_session_messages(session_id)  # Fetch all messages
+        recent_messages = recent_messages[-5:] if recent_messages else []  # Manually limit to last 5
+        if any("mckinsey trends" in msg[1].lower() for msg in recent_messages):
+            print("[DEBUG] matched McKinsey Trend Request (follow-up)")
+            return "McKinsey Trend Request"
+
+    # Other intents remain unchanged
     if any(word in text for word in ["contact", "human", "support", "agent", "real person"]):
         return "Human Support Service Request"
 
@@ -203,7 +218,7 @@ def company_info_handler(user_input, session_id=None):
     if not search_results:
         return "I couldn't find anything relevant in Bravur's data. Try rephrasing your question."
 
-    semantic_context = format_semantic_context(search_results)  # UPDATED
+    semantic_context = format_semantic_context(search_results)
 
     system_prompt = (
         f"You are a helpful assistant for Bravur. "
@@ -221,7 +236,7 @@ def company_info_handler(user_input, session_id=None):
     return reply
 
 def company_info_handler_streaming(user_input, session_id=None):
-    detected_intent = classify_intent(user_input)
+    detected_intent = classify_intent(user_input, session_id)  # Pass session_id
     print("[DEBUG] Detected intent (streaming):", detected_intent)
 
     if detected_intent == "McKinsey Trend Request":
@@ -251,7 +266,7 @@ def company_info_handler_streaming(user_input, session_id=None):
         if embedding:
             search_results = semantic_search(embedding, top_k=5)
 
-    semantic_context = format_semantic_context(search_results)  # UPDATED
+    semantic_context = format_semantic_context(search_results)
 
     system_prompt = (
         f"You are a helpful assistant for Bravur. "
@@ -296,14 +311,27 @@ def extract_days(user_input):
     return None
 
 def handle_mckinsey_trends(user_input=None):
+    filters = extract_query_filters(user_input or "")
     days = extract_days(user_input or "")
-    entries = get_latest_consulting_trends(source="McKinsey", limit=5, since_days=days)
+    date_exact = filters.get("date_exact")
+    keywords = None if date_exact else filters.get("keywords")
+
+    # Log the filters for debugging
+    logging.info(f"Filters extracted: date_exact={date_exact}, days={days}, keywords={keywords}")
+
+    entries = get_latest_consulting_trends(
+        source="McKinsey",
+        limit=5,
+        since_days=days,
+        date_exact=date_exact,
+        keywords=keywords
+    )
 
     if not entries:
-        return f"Sorry, I couldn't find any McKinsey trends in the past {days or 'few'} days."
+        logging.info(f"No trends found for date_exact={date_exact}")
+        return f"Sorry, I couldn't find any McKinsey trends matching your query."
 
-    lines = [f"<strong>Here are the latest McKinsey trends from the past {days or 'few'} days:</strong><br><br>"]
-
+    lines = [f"<strong>McKinsey Trends</strong><br><br>"]
     for idx, (title, summary, url, published_date) in enumerate(entries, 1):
         summary_clean = summary.strip().replace("\n", " ").replace("\\n", " ")
         lines.append(
@@ -312,5 +340,31 @@ def handle_mckinsey_trends(user_input=None):
             f"<em>Published: {published_date}</em><br>"
             f"<a href=\"{url}\" target=\"_blank\" style=\"color:#1a0dab\">Read more</a><br><br>"
         )
-
     return "\n".join(lines)
+
+def extract_query_filters(user_input):
+    filters = {
+        "date_exact": None,
+        "keywords": []
+    }
+
+    # Enhanced regex to match flexible date formats (e.g., "4 may", "29 april 2025")
+    date_match = re.search(r"\b(\d{1,2})\s*(?:-?\s*)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(?:\s*(\d{2,4}))?\b", user_input, re.IGNORECASE)
+    if date_match:
+        try:
+            day = date_match.group(1)
+            month = date_match.group(2).lower()[:3]  # Take first 3 letters for consistency
+            year = date_match.group(3) if date_match.group(3) else datetime.datetime.now().year
+            date_str = f"{day} {month} {year}"
+            parsed = date_parser.parse(date_str, fuzzy=True, dayfirst=True)
+            filters["date_exact"] = parsed.date()
+            logging.info(f"Parsed date from input '{user_input}': {filters['date_exact']}")
+        except Exception as e:
+            logging.warning(f"Date parsing failed for input '{user_input}': {e}")
+
+    # Extract keywords (remove stop words)
+    cleaned_input = re.sub(r"[^\w\s]", "", user_input.lower())
+    tokens = cleaned_input.split()
+    filters["keywords"] = [word for word in tokens if word not in {"what", "is", "are", "the", "of", "on", "from", "in", "and", "mckinsey", "trend", "show", "me", "please"}]
+
+    return filters
