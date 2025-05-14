@@ -255,57 +255,72 @@ def update_pending_embeddings():
         logging.error(f"Error during embedding update: {e}")
 
 # get latest McKinsey (or other source) consulting trends
-def get_latest_consulting_trends(source="McKinsey", limit=5, since_days=None, date_exact=None, keywords=None):
+def get_latest_consulting_trends(
+        source="McKinsey", limit=10, since_days=None, date_exact=None, keywords=None, from_date=None, to_date=None
+):
     conn = get_db_connection()
     if conn is None:
+        logging.error("No DB connection for trends")
         return []
 
     try:
         cursor = conn.cursor()
-
-        # Debug query to see all dates in the table
-        cursor.execute("SELECT title, published_date FROM consulting_trends WHERE source = %s ORDER BY published_date DESC LIMIT 10;", (source,))
-        debug_results = cursor.fetchall()
-        logging.info(f"Debug: Raw dates in consulting_trends: {debug_results}")
+        limit = max(1, min(limit, 50))  # Enforce reasonable limit
 
         conditions = ["source = %s"]
         params = [source]
 
-        if since_days:
-            conditions.append("published_date >= CURRENT_DATE - INTERVAL %s DAY")
-            params.append(since_days)
-
+        # --- Date filtering logic
         if date_exact:
-            conditions.append("published_date = %s")
+            conditions.append("published_date::date = %s")
             params.append(date_exact)
+        elif from_date and to_date:
+            conditions.append("published_date::date BETWEEN %s AND %s")
+            params.extend([from_date, to_date])
+        elif from_date:
+            conditions.append("published_date::date >= %s")
+            params.append(from_date)
+        elif since_days:
+            conditions.append("published_date::date >= CURRENT_DATE - INTERVAL '%s days'")
+            params.append(since_days)
+        else:
+            # Default to last 30 days if no date filter
+            conditions.append("published_date::date >= CURRENT_DATE - INTERVAL '30 days'")
 
-        if keywords and not date_exact:
-            keyword_conditions = []
-            for kw in keywords:
-                keyword_conditions.append("(LOWER(title) LIKE %s OR LOWER(summary) LIKE %s)")
-                params.extend([f"%{kw.lower()}%"] * 2)
-            if keyword_conditions:
-                conditions.append("(" + " OR ".join(keyword_conditions) + ")")
+        # --- Keyword filtering
+        junk_keywords = {"what", "this", "week", "show", "articles", "give", "new", "latest", "recent"}
+        valid_keywords = [kw for kw in (keywords or []) if len(kw) > 3 and kw.isalpha() and kw not in junk_keywords]
+
+        if valid_keywords:
+            keyword_clauses = []
+            for kw in valid_keywords:
+                keyword_clauses.append("(LOWER(title) LIKE %s OR LOWER(summary) LIKE %s)")
+                like = f"%{kw.lower()}%"
+                params.extend([like, like])
+            conditions.append("(" + " OR ".join(keyword_clauses) + ")")
 
         where_clause = " AND ".join(conditions)
         query = f"""
-                SELECT title, summary, url, published_date
-                FROM consulting_trends
-                WHERE {where_clause}
-                ORDER BY published_date DESC
-                LIMIT %s;
-            """
+            SELECT title, summary, url, published_date
+            FROM consulting_trends
+            WHERE {where_clause}
+            ORDER BY published_date DESC
+            LIMIT %s;
+        """
         params.append(limit)
 
         logging.info(f"Executing query: {query}")
         logging.info(f"With parameters: {params}")
         cursor.execute(query, params)
         results = cursor.fetchall()
-        logging.info(f"Retrieved {len(results)} results: {results}")
+        logging.info(f"Retrieved {len(results)} trends")
+
 
         cursor.close()
         conn.close()
         return results
     except Exception as e:
         logging.error(f"Error fetching trends: {e}")
+        if conn:
+            conn.close()
         return []
