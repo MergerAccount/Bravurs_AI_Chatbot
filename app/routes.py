@@ -1,3 +1,4 @@
+import os
 from flask import Blueprint, request, jsonify, Response, stream_with_context, render_template
 from app.controllers.chat_controller import handle_chat
 from app.controllers.feedback_controller import handle_feedback_submission
@@ -34,11 +35,12 @@ def text_to_speech_api():
     from app.speech import text_to_speech
     data = request.get_json()
     text = data.get("text", "")
+    language = data.get("language", "en-US")
 
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    audio_path = text_to_speech(text)
+    audio_path = text_to_speech(text, language)
     if not audio_path:
         return jsonify({"error": "TTS failed"}), 500
 
@@ -47,6 +49,15 @@ def text_to_speech_api():
             yield from f
 
     return Response(generate(), mimetype="audio/wav")
+
+
+@routes.route("/stt", methods=["POST"])
+def speech_to_text_api():
+    from app.speech import speech_to_text
+
+    result = speech_to_text()
+
+    return jsonify(result)
 
 
 frontend = Blueprint("frontend", __name__)
