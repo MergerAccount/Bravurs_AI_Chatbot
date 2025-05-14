@@ -29,7 +29,7 @@ def fetch_relevant_info():
 
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, category, title, content FROM bravur_information;")
+        cursor.execute("SELECT id, category, title, content FROM bravur_data;")
         rows = cursor.fetchall()
         cursor.close()
         conn.close()
