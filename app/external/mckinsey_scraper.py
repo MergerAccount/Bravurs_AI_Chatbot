@@ -74,15 +74,25 @@ def scrape_rss_like_feed():
         summary = summary_tag.get_text(strip=True) if summary_tag else "No summary available."
         url = link_tag.get_text(strip=True) if link_tag else None
 
-        # Parse pubDate with correct format
+        # Parse pubDate with multiple possible formats
         published_date = None
         if pub_date_tag:
-            try:
-                published_date = datetime.strptime(pub_date_tag.text.strip(), "%a, %d %b %Y").date()
-            except Exception as e:
-                print(f"Date parsing error: {e}")
+            date_str = pub_date_tag.text.strip()
+            for fmt in [
+                "%a, %d %b %Y %H:%M:%S %Z",
+                "%a, %d %b %Y",
+                "%Y-%m-%d",
+                "%d %b %Y"
+            ]:
+                try:
+                    published_date = datetime.strptime(date_str, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if not published_date:
+                print(f"Date parsing failed for: {date_str}")
 
-        if title and url:
+        if title and url and published_date:
             insert_article("McKinsey", title, summary, url, published_date)
             count += 1
 

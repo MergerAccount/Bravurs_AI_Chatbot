@@ -80,18 +80,35 @@ def classify_intent(user_input: str, session_id: str = None) -> str:
 
     mckinsey_keywords = ["mckinsey", "consulting", "insight", "report", "trend", "update", "news", "article"]
     time_keywords = ["day", "week", "month", "recent", "latest", "past", "summary", "few", "today", "yesterday"]
+    month_names = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
 
+    # Enhanced date pattern to include month-only
+    date_pattern = r"\b(\d{1,2}\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(\d{4})?)|((jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(\d{4}))|(\d{4})|\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
+
+    # Check for McKinsey trend requests
     if any(mk in text for mk in mckinsey_keywords):
-        if any(tk in text for tk in time_keywords) or re.search(r"\d+\s*(day|week|month|days|weeks)", text):
+        if any(tk in text for tk in time_keywords) or re.search(r"\d+\s*(day|week|month|days|weeks)", text) or re.search(date_pattern, text):
             print("[DEBUG] matched McKinsey Trend Request (enhanced)")
             return "McKinsey Trend Request"
 
-    if session_id:
-        date_pattern = r"\b(\d{1,2})\s*(?:-?\s*)?(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b"
-        if re.search(date_pattern, text):
+    # Check for month-only or date-related queries in McKinsey context
+    if re.search(date_pattern, text):
+        if session_id:
             recent_messages = get_session_messages(session_id)[-5:]
-            if any("mckinsey trends" in msg[1].lower() for msg in recent_messages):
-                print("[DEBUG] matched McKinsey Trend Request (follow-up)")
+            if any("mckinsey" in msg[1].lower() or "trend" in msg[1].lower() for msg in recent_messages):
+                print("[DEBUG] matched McKinsey Trend Request (follow-up date)")
+                return "McKinsey Trend Request"
+        # Treat month-only queries as McKinsey trends if no other intent matches
+        if any(month in text for month in month_names):
+            print("[DEBUG] matched McKinsey Trend Request (month-only)")
+            return "McKinsey Trend Request"
+
+    # Check for specific topics or article titles in McKinsey context
+    if session_id:
+        recent_messages = get_session_messages(session_id)[-5:]
+        if any("mckinsey" in msg[1].lower() or "trend" in msg[1].lower() for msg in recent_messages):
+            if any(topic in text for topic in ["governance", "risk", "compliance", "best practices", "technology", "strategy"]):
+                print("[DEBUG] matched McKinsey Trend Request (topic follow-up)")
                 return "McKinsey Trend Request"
 
     if any(word in text for word in ["contact", "human", "support", "agent", "real person"]):
@@ -203,6 +220,7 @@ def company_info_handler(user_input, session_id=None):
     system_prompt = (
         f"You are a helpful assistant for Bravur. "
         f"Answer the user based on this information. Cite Row IDs used:\n\n{semantic_context}"
+        f"You are allowed to search up Gartner information"
     )
 
     gpt_prompt = [{"role": "system", "content": system_prompt}] + recent_convo + [{"role": "user", "content": user_input}]
@@ -308,41 +326,74 @@ def extract_days(user_input):
     return None
 
 def handle_mckinsey_trends(user_input=None):
+    import datetime
+    import logging
+
     filters = extract_query_filters(user_input or "")
     date_exact = filters.get("date_exact")
     since_days = filters.get("since_days")
     from_date = filters.get("from_date")
     to_date = filters.get("to_date")
+    month_year = filters.get("month_year")
+    year_only = filters.get("year_only")
     keywords = filters.get("keywords")
     limit = filters.get("limit", 10)
 
-    logging.info(f"Filters: date_exact={date_exact}, since_days={since_days}, from_date={from_date}, to_date={to_date}, limit={limit}, keywords={keywords}")
+    logging.info(
+        f"Filters: date_exact={date_exact}, since_days={since_days}, from_date={from_date}, "
+        f"to_date={to_date}, month_year={month_year}, year_only={year_only}, limit={limit}, keywords={keywords}"
+    )
+
+    # If no date filters, check for topic-specific keywords
+    if not any([date_exact, since_days, from_date, to_date, month_year, year_only]) and not keywords:
+        # Extract topic keywords for queries like "tell me more about governance, risk, and compliance"
+        topic_keywords = [
+            word for word in user_input.lower().split()
+            if word not in {"tell", "more", "about", "a", "new", "lens", "on", "best", "practices"} and len(word) > 3
+        ]
+        if topic_keywords:
+            keywords = topic_keywords
+            logging.info(f"Added topic keywords: {keywords}")
 
     entries = get_latest_consulting_trends(
         source="McKinsey",
         limit=limit,
         since_days=since_days,
-        date_exact=date_exact if not (from_date and to_date) else None,
+        date_exact=date_exact if not (from_date and to_date or month_year or year_only) else None,
         keywords=keywords,
         from_date=from_date,
-        to_date=to_date
+        to_date=to_date,
+        month_year=month_year,
+        year_only=year_only
     )
 
     if not entries:
         logging.info("No trends found.")
-        if date_exact and not (from_date and to_date):
+        if date_exact and not (from_date and to_date or month_year or year_only):
             return f"Sorry, no McKinsey articles found for {date_exact.strftime('%B %d, %Y')}."
+        elif month_year:
+            return f"Sorry, no McKinsey articles found for {month_year.strftime('%B %Y')}."
+        elif year_only:
+            return f"Sorry, no McKinsey articles found for {year_only}."
         elif from_date and to_date:
             return f"Sorry, no McKinsey articles found between {from_date.strftime('%B %d, %Y')} and {to_date.strftime('%B %d, %Y')}."
         elif since_days:
             return f"Sorry, no McKinsey articles found from the last {since_days} days."
+        elif keywords:
+            return f"Sorry, no McKinsey articles found matching the topic: {', '.join(keywords)}."
         return "Sorry, no McKinsey trends found matching your query."
 
-    # Validate that entries match the requested date filter
+    # Validate entries against date filters
     filtered_entries = []
     for entry in entries:
         published_date = entry[3]
-        if from_date and to_date:
+        if month_year:
+            if not (published_date.year == month_year.year and published_date.month == month_year.month):
+                continue
+        elif year_only:
+            if published_date.year != year_only:
+                continue
+        elif from_date and to_date:
             if not (from_date <= published_date <= to_date):
                 continue
         elif date_exact:
@@ -352,13 +403,61 @@ def handle_mckinsey_trends(user_input=None):
 
     if not filtered_entries:
         logging.info("No entries matched the date filter after validation.")
-        if date_exact and not (from_date and to_date):
+        if date_exact and not (from_date and to_date or month_year or year_only):
             return f"Sorry, no McKinsey articles found for {date_exact.strftime('%B %d, %Y')}."
+        elif month_year:
+            return f"Sorry, no McKinsey articles found for {month_year.strftime('%B %Y')}."
+        elif year_only:
+            return f"Sorry, no McKinsey articles found for {year_only}."
         elif from_date and to_date:
             return f"Sorry, no McKinsey articles found between {from_date.strftime('%B %d, %Y')} and {to_date.strftime('%B %d, %Y')}."
         elif since_days:
             return f"Sorry, no McKinsey articles found from the last {since_days} days."
+        elif keywords:
+            return f"Sorry, no McKinsey articles found matching the topic: {', '.join(keywords)}."
         return "Sorry, no McKinsey trends found matching your date criteria."
+
+    # Fallback: If no results, try a broader range (e.g., 7 days around date_exact or month)
+    if not filtered_entries:
+        logging.info("Attempting fallback search for nearby trends")
+        fallback_days = 7
+        if date_exact:
+            fallback_from = (date_exact - datetime.timedelta(days=fallback_days)).date()
+            fallback_to = (date_exact + datetime.timedelta(days=fallback_days)).date()
+            fallback_label = date_exact.strftime('%B %d, %Y')
+        elif month_year:
+            fallback_from = month_year
+            fallback_to = (month_year.replace(day=1) + datetime.timedelta(days=32)).replace(day=1) - datetime.timedelta(days=1)
+            fallback_label = month_year.strftime('%B %Y')
+        else:
+            # Default fallback for topic-based or no-date queries
+            fallback_from = (datetime.datetime.now() - datetime.timedelta(days=fallback_days)).date()
+            fallback_to = (datetime.datetime.now() + datetime.timedelta(days=fallback_days)).date()
+            fallback_label = "recent trends"
+
+        fallback_entries = get_latest_consulting_trends(
+            source="McKinsey",
+            limit=limit,
+            from_date=fallback_from,
+            to_date=fallback_to,
+            keywords=keywords
+        )
+
+        if fallback_entries:
+            lines = [f"<strong>McKinsey Trends (Nearby Dates)</strong><br><br>"]
+            lines.append(
+                f"No exact matches found for {fallback_label}. "
+                f"Showing trends from {fallback_from.strftime('%B %d, %Y')} to {fallback_to.strftime('%B %d, %Y')}:<br><br>"
+            )
+            for idx, (title, summary, url, published_date) in enumerate(fallback_entries, 1):
+                summary_clean = summary.strip().replace("\n", " ").replace("\\n", " ")
+                lines.append(
+                    f"{idx}. <strong>{title}</strong><br>"
+                    f"{summary_clean[:300]}...<br>"
+                    f"<em>Published: {published_date.strftime('%Y-%m-%d')}</em><br>"
+                    f"<a href=\"{url}\" target=\"_blank\" style=\"color:#1a0dab\">Read more</a><br><br>"
+                )
+            return "\n".join(lines)
 
     lines = [f"<strong>McKinsey Trends</strong><br><br>"]
     for idx, (title, summary, url, published_date) in enumerate(filtered_entries, 1):
@@ -378,38 +477,39 @@ def extract_query_filters(user_input):
     import re
     import logging
 
-    # Get current date for context
     now = datetime.datetime.now()
     current_year = now.year
-    week_start = now - datetime.timedelta(days=now.weekday())  # Monday of current week
-    week_end = week_start + datetime.timedelta(days=6)  # Sunday of current week
-    last_week_start = week_start - datetime.timedelta(days=7)  # Monday of last week
-    last_week_end = last_week_start + datetime.timedelta(days=6)  # Sunday of last week
+    week_start = now - datetime.timedelta(days=now.weekday())
+    week_end = week_start + datetime.timedelta(days=6)
+    last_week_start = week_start - datetime.timedelta(days=7)
+    last_week_end = last_week_start + datetime.timedelta(days=6)
 
     filters = {
         "date_exact": None,
         "since_days": None,
         "from_date": None,
         "to_date": None,
+        "month_year": None,
+        "year_only": None,
         "keywords": [],
         "limit": 10
     }
 
     cleaned_input = re.sub(r"[^\w\s/-]", "", user_input.lower())
 
-    # --- 1. Handle "this week" as calendar week (Monday to Sunday)
+    # 1. Handle "this week"
     if "this week" in cleaned_input:
         filters["from_date"] = week_start.date()
         filters["to_date"] = week_end.date()
         logging.info(f"Parsed 'this week' as {filters['from_date']} to {filters['to_date']}")
 
-    # --- 2. Handle "last week" as previous calendar week
+    # 2. Handle "last week"
     if "last week" in cleaned_input and not filters["from_date"]:
         filters["from_date"] = last_week_start.date()
         filters["to_date"] = last_week_end.date()
         logging.info(f"Parsed 'last week' as {filters['from_date']} to {filters['to_date']}")
 
-    # --- 3. Date range: "from 1 May to 12 May" or "between 12 May to 30 April"
+    # 3. Date range: "from 1 May to 12 May"
     range_match = re.search(
         r"(?:from|between)\s+(\d{1,2})\s*([a-z]+)\s*(?:\s+(\d{2,4}))?\s+(?:to|-)\s+(\d{1,2})\s*([a-z]+)\s*(?:\s+(\d{2,4}))?",
         cleaned_input
@@ -420,7 +520,6 @@ def extract_query_filters(user_input):
             to_str = f"{range_match.group(4)} {range_match.group(5)} {range_match.group(6) or current_year}"
             from_date = date_parser.parse(from_str, fuzzy=True).date()
             to_date = date_parser.parse(to_str, fuzzy=True).date()
-            # Swap if from_date is after to_date
             if from_date > to_date:
                 from_date, to_date = to_date, from_date
                 logging.info(f"Swapped date range: {from_date} to {to_date}")
@@ -430,9 +529,12 @@ def extract_query_filters(user_input):
         except Exception as e:
             logging.warning(f"Date range parsing failed: {e}")
 
-    # --- 4. Specific date like "28 April" (only if no range)
+    # 4. Specific date: "6 May 2025"
     if not filters["from_date"] and not filters["to_date"]:
-        single_date_match = re.search(r"\b(\d{1,2})\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(\d{4})?\b", cleaned_input)
+        single_date_match = re.search(
+            r"\b(\d{1,2})\s*(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(\d{4})?\b",
+            cleaned_input
+        )
         if single_date_match:
             try:
                 day = single_date_match.group(1)
@@ -445,9 +547,50 @@ def extract_query_filters(user_input):
             except Exception as e:
                 logging.warning(f"Single date parsing failed: {e}")
 
-    # --- 5. Relative ranges: "last 7 days", "past 2 weeks"
+    # 5. Month and year: "May 2025"
+    if not filters["from_date"] and not filters["to_date"] and not filters["date_exact"]:
+        month_year_match = re.search(
+            r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(\d{4})\b",
+            cleaned_input
+        )
+        if month_year_match:
+            try:
+                month_str = month_year_match.group(1)
+                year = month_year_match.group(2)
+                month_date = date_parser.parse(f"1 {month_str} {year}", fuzzy=True).date()
+                filters["month_year"] = month_date
+                logging.info(f"Parsed month/year: {filters['month_year']}")
+            except Exception as e:
+                logging.warning(f"Month/year parsing failed: {e}")
+
+    # 6. Month only: "April"
+    if not filters["from_date"] and not filters["to_date"] and not filters["date_exact"] and not filters["month_year"]:
+        month_only_match = re.search(
+            r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b",
+            cleaned_input
+        )
+        if month_only_match:
+            try:
+                month_str = month_only_match.group(1)
+                # Assume current year if after current month, else previous year
+                month_date = date_parser.parse(f"1 {month_str} {current_year}", fuzzy=True).date()
+                if month_date > now.date():
+                    month_date = month_date.replace(year=current_year - 1)
+                filters["month_year"] = month_date
+                logging.info(f"Parsed month only: {filters['month_year']}")
+            except Exception as e:
+                logging.warning(f"Month only parsing failed: {e}")
+
+    # 7. Year only: "2025"
+    if not filters["from_date"] and not filters["to_date"] and not filters["date_exact"] and not filters["month_year"]:
+        year_match = re.search(r"\b(\d{4})\b", cleaned_input)
+        if year_match and int(year_match.group(1)) in range(2000, current_year + 10):
+            filters["year_only"] = int(year_match.group(1))
+            logging.info(f"Parsed year: {filters['year_only']}")
+
+    # 8. Relative ranges: "last 7 days"
     rel_match = re.search(r"\b(last|past)\s*(\d+)\s*(day|week|month|days|weeks|months)\b", cleaned_input)
-    if rel_match and not filters["from_date"] and not filters["date_exact"]:
+    if rel_match and not filters["from_date"] and not filters["date_exact"] and not filters["month_year"]:
         try:
             number = int(rel_match.group(2))
             unit = rel_match.group(3)
@@ -461,12 +604,14 @@ def extract_query_filters(user_input):
         except Exception as e:
             logging.warning(f"Relative range parsing failed: {e}")
 
-    # --- 6. Fallback for "recent" or "latest"
-    if ("recent" in cleaned_input or "latest" in cleaned_input) and not filters["from_date"] and not filters["date_exact"]:
+    # 9. Fallback for "recent" or "latest"
+    if ("recent" in cleaned_input or "latest" in cleaned_input) and not any(
+            [filters["from_date"], filters["date_exact"], filters["month_year"], filters["year_only"]]
+    ):
         filters["since_days"] = filters["since_days"] or 7
         logging.info(f"Applied fallback for recent/latest: {filters['since_days']} days")
 
-    # --- 7. Flexible limit detection like "10 articles"
+    # 10. Flexible limit detection
     limit_match = re.search(r"\b(?:show|give|list|get|display)\s*(\d{1,2})\s*(trend|article|result)s\b", cleaned_input)
     if limit_match:
         try:
@@ -475,11 +620,12 @@ def extract_query_filters(user_input):
         except Exception as e:
             logging.warning(f"Limit parsing failed: {e}")
 
-    # --- 8. Filter keywords
+    # 11. Filter keywords
     stopwords = {
         "what", "is", "are", "the", "of", "on", "from", "in", "and", "to", "me", "please", "this", "week", "last",
         "mckinsey", "trends", "latest", "recent", "show", "any", "new", "between", "get", "give", "articles",
-        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"
+        "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+        "published", "publish", "tell", "more", "about"
     }
     filters["keywords"] = [
         word for word in cleaned_input.split()

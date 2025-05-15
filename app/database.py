@@ -255,8 +255,20 @@ def update_pending_embeddings():
         logging.error(f"Error during embedding update: {e}")
 
 # get latest McKinsey (or other source) consulting trends
+import psycopg2
+import logging
+from datetime import datetime, timedelta  # Explicitly import timedelta
+from app.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, OPENAI_API_KEY
+from openai import OpenAI
+
+# Initialize OpenAI client
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ... (other functions like get_db_connection, etc., remain unchanged)
+
 def get_latest_consulting_trends(
-        source="McKinsey", limit=10, since_days=None, date_exact=None, keywords=None, from_date=None, to_date=None
+        source="McKinsey", limit=10, since_days=None, date_exact=None, keywords=None,
+        from_date=None, to_date=None, month_year=None, year_only=None
 ):
     conn = get_db_connection()
     if conn is None:
@@ -265,15 +277,26 @@ def get_latest_consulting_trends(
 
     try:
         cursor = conn.cursor()
-        limit = max(1, min(limit, 50))  # Enforce reasonable limit
+        limit = max(1, min(limit, 50))
 
         conditions = ["source = %s"]
         params = [source]
 
-        # --- Date filtering logic
+        # Date filtering logic
         if date_exact:
             conditions.append("published_date::date = %s")
             params.append(date_exact)
+        elif month_year:
+            # Filter for the entire month
+            conditions.append("published_date::date >= %s")
+            conditions.append("published_date::date < %s")
+            next_month = (month_year.replace(day=1) + timedelta(days=32)).replace(day=1)
+            params.extend([month_year, next_month])
+        elif year_only:
+            # Filter for the entire year
+            conditions.append("published_date::date >= %s")
+            conditions.append("published_date::date < %s")
+            params.extend([datetime(year_only, 1, 1).date(), datetime(year_only + 1, 1, 1).date()])
         elif from_date and to_date:
             conditions.append("published_date::date BETWEEN %s AND %s")
             params.extend([from_date, to_date])
@@ -284,10 +307,9 @@ def get_latest_consulting_trends(
             conditions.append("published_date::date >= CURRENT_DATE - INTERVAL '%s days'")
             params.append(since_days)
         else:
-            # Default to last 30 days if no date filter
             conditions.append("published_date::date >= CURRENT_DATE - INTERVAL '30 days'")
 
-        # --- Keyword filtering
+        # Keyword filtering
         junk_keywords = {"what", "this", "week", "show", "articles", "give", "new", "latest", "recent"}
         valid_keywords = [kw for kw in (keywords or []) if len(kw) > 3 and kw.isalpha() and kw not in junk_keywords]
 
@@ -314,7 +336,6 @@ def get_latest_consulting_trends(
         cursor.execute(query, params)
         results = cursor.fetchall()
         logging.info(f"Retrieved {len(results)} trends")
-
 
         cursor.close()
         conn.close()
