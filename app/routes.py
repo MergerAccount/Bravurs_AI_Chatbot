@@ -55,7 +55,10 @@ def text_to_speech_api():
 def speech_to_text_api():
     from app.speech import speech_to_text
 
-    result = speech_to_text()
+    data = request.get_json() or {}
+    language = data.get("language")
+
+    result = speech_to_text(language)
 
     return jsonify(result)
 
