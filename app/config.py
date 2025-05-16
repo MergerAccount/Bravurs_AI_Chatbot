@@ -6,6 +6,9 @@ load_dotenv()
 # OpenAI API Key
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Groq API Key
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 # Database Credentials
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
