@@ -275,6 +275,11 @@ def company_info_handler_streaming(user_input, session_id=None):
         yield reply
         return
 
+    if detected_intent == "Unknown":
+        reply = "I'm here to answer questions about Bravur and IT services. How can I help?"
+        yield reply
+        return
+
     recent_convo = get_recent_conversation(session_id)
 
     search_results = hybrid_search(user_input, top_k=5)
