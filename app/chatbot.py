@@ -5,16 +5,22 @@ import threading
 from functools import lru_cache
 from hashlib import sha256
 from openai import OpenAI
+from groq import Groq
 from fuzzywuzzy import fuzz
 
-from app.config import OPENAI_API_KEY
+from app.config import OPENAI_API_KEY, GROQ_API_KEY
 from app.database import (
     get_session_messages, store_message,
     hybrid_search, semantic_search, embed_query
 )
 from app.agentConnector import AgentConnector
 
+# Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Initialize Groq client
+groq_client = Groq(api_key=GROQ_API_KEY)
+
 agent_connector = AgentConnector()
 
 embedding_cache = {}
@@ -72,18 +78,68 @@ def get_recent_conversation(session_id, max_tokens=400):
     return selected
 
 def classify_intent(user_input: str) -> str:
-    text = user_input.lower()
+    """
+        Classifies user intent using an LLM (Groq/Llama 3 8B).
+        Returns one of: "Human Support Service Request", "IT Services & Trends",
+                         "Company Info", or "Unknown".
+        """
 
-    if any(word in text for word in ["contact", "human", "support", "agent", "real person"]):
-        return "Human Support Service Request"
+    intent_categories = [
+        "Human Support Service Request",
+        "IT Services & Trends",
+        "Company Info",
+        "Unknown"
+    ]
 
-    if any(word in text for word in ["cloud", "ai", "software", "tech", "cybersecurity", "trend", "machine learning", "python", "network"]):
-        return "IT Services & Trends"
+    # Construct the prompt for the LLM
+    prompt_content = f"""
+    Analyze the user's query below and classify its primary intent into one of the following exact categories:
+    - Human Support Service Request (if the user wants to talk to a human or needs direct help)
+    - IT Services & Trends (if the query is about general IT topics, technology, cloud, AI, software, cybersecurity, etc.)
+    - Company Info (if the query is about Bravur itself, its services, mission, vision, team, etc.)
+    - Unknown (if the query does not fit any of the above categories or is off-topic)
 
-    if any(word in text for word in ["company", "bravur", "mission", "vision", "history", "location", "services", "employees", "profile"]):
-        return "Company Info"
+    User Query: "{user_input}"
 
-    return "Unknown"
+    Respond with ONLY the category name from the list above.
+    Classified Intent:"""
+
+    try:
+        # Small, fast model on Groq for classification
+        classification_model = "llama3-8b-8192"
+
+        logging.info(f"Classifying intent for: '{user_input}' using model {classification_model}")
+
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert intent classifier. Your task is to categorize the user's query into one of the predefined categories and respond with only the category name."
+                },
+                {
+                    "role": "user",
+                    "content": prompt_content,
+                }
+            ],
+            model=classification_model,
+            temperature=0.0,  # For deterministic classification
+        )
+
+        llm_response = chat_completion.choices[0].message.content.strip()
+        logging.info(f"LLM classified intent as: '{llm_response}'")
+
+        # Validate if the LLM response is one of our predefined categories
+        if llm_response in intent_categories:
+            return llm_response
+        else:
+            # If the LLM hallucinates or returns something unexpected, default to Unknown
+            logging.warning(f"LLM returned an unexpected category: '{llm_response}'. Defaulting to Unknown.")
+            return "Unknown"
+
+    except Exception as e:
+        logging.error(f"Error during LLM intent classification: {e}")
+        # Fallback to "Unknown" in case of API error
+        return "Unknown"
 
 def embed_query_cached(query):
     key = sha256(query.encode()).hexdigest()
