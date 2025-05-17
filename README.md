@@ -2,6 +2,7 @@
 
 ## Prerequisites:
 - PyCharm Installed or Install Python
+- Node.js installed (for Husky and CommitLint)
 
 ## Clone the repository:
 ```bash
@@ -35,6 +36,15 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+
+## Install Git commit hooks (Husky + CommitLint)
+This project uses Husky to enforce proper commit messages.
+
+Run the following command in the project root:
+```bash
+npm install
+```
+This will automatically install Husky and set up CommitLint hooks.
 
 ## Run the App
 ```bash

@@ -3,7 +3,7 @@ import psycopg2
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# Load .env file
+# Load ..env file
 load_dotenv()
 
 # Initialize OpenAI client
