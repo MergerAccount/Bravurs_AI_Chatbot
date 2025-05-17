@@ -6,6 +6,7 @@ __pycache__/
 *.so
 
 node_modules/
+
 *.wav
 
 # Virtual environments
