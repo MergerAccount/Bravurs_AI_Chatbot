@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bravur Chatbot</title>
+    <style>
+        .consent-status-badge { margin-left: 8px; font-weight: bold; }
+        .consent-accepted { color: green; }
+        .consent-withdrawn { color: red; }
+        .chatbox-hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<!-- Fixed Header -->
+<div class="header">
+    <a href="/" class="logo-link">
+        <img src="https://bravur.webplaatsproject.nl/wp-content/uploads/2025/04/Bravur.svg" alt="Bravur Logo" class="logo-img">
+    </a>
+    <a href="/professionals/" class="nav-link">Professionals</a>
+    <a href="/over-ons/" class="nav-link">Over ons</a>
+    <a href="/opdrachtgevers/" class="nav-link">Opdrachtgevers</a>
+    <a href="/contact/" class="nav-link">Contact</a>
+    <div class="like-container">
+        <img src="https://img.icons8.com/material-rounded/24/ffffff/like.png" />
+        <span class="like-counter">2</span>
+    </div>
+    <a href="/vacatures/" class="vacature-button">
+        Vacatures <span class="vacature-counter">46</span>
+    </a>
+</div>
+
+<div class="header-spacer"></div>
+
+<section class="content-section">
+    <div class="content-container">
+        <div class="text-container">
+            <h1 class="content-heading">Be Boldy Human.</h1>
+            <p class="content-paragraph">
+                Sta op. Kom in beweging.<br>
+                Wij staan achter jou. Jij achter ons. Verbinding en waardering. Daar draait het écht om.
+                Jij staat centraal, want zonder jou zijn we nergens. We zijn gelijkwaardig.
+            </p>
+            <div>
+                <a href="/digitale-scan/" target="_blank" class="digitale-scan-button">Doe de digitale scan</a>
+                <a href="/vacatures/" class="vacatures-button">Vacatures</a>
+            </div>
+        </div>
+        <div class="image-container">
+            <img src="https://bravur.webplaatsproject.nl/wp-content/uploads/2025/04/be_boldly_human-800x800.webp" alt="Be Boldly Human" class="content-image">
+        </div>
+    </div>
+</section>
+
+<!-- Chatbot Widget -->
+<div id="chatbox-widget">
+    <div id="chatbox-toggle">
+        <span>Chat with Bravur</span>
+        <span id="toggle-icon">+</span>
+    </div>
+    <div id="chatbox-inner" class="chatbox-hidden">
+        <div class="chat-container">
+            <h1>Bravur AI Chatbot</h1>
+            <div id="chat-box" class="chat-box">
+                <p class="message bot-message">Welcome to Bravur AI Chatbot! How can I help you today?</p>
+            </div>
+            <div class="spinner" id="spinner"></div>
+            <div class="input-container">
+                <button id="voice-chat-btn">🎤</button>
+                <input type="text" id="user-input" placeholder="Type your question...">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+            <div class="session-info">Session ID: <span id="session-id">Loading...</span></div>
+
+            <!-- Consent Bubble -->
+            <div id="consent-bubble" class="consent-bubble" style="display: none;">
+                <div class="consent-message">
+                    <p>We use cookies and collect data to improve your experience. Please accept to continue using the chatbot.</p>
+                    <button id="accept-consent-btn" class="accept-consent-btn">Accept</button>
+                </div>
+            </div>
+
+            <!-- Feedback -->
+            <div class="show-feedback-btn" id="show-feedback-btn" style="display: none;">
+                <button onclick="showFeedback()">Give Feedback</button>
+            </div>
+            <div class="feedback-container" id="feedback-container">
+                <h3>Rate your experience</h3>
+                <div class="smiley-row" id="smiley-row">
+                    <span onclick="selectSmiley(1)">😠</span>
+                    <span onclick="selectSmiley(2)">😕</span>
+                    <span onclick="selectSmiley(3)">😐</span>
+                    <span onclick="selectSmiley(4)">🙂</span>
+                    <span onclick="selectSmiley(5)">😍</span>
+                </div>
+                <textarea id="feedback-comment" rows="3" placeholder="Optional comment..."></textarea>
+                <div class="feedback-actions">
+                    <button onclick="submitFeedback()">Submit Feedback</button>
+                    <button onclick="hideFeedback()" style="background:#ccc;color:#000;">Hide</button>
+                </div>
+                <div id="edit-feedback-btn" style="margin-top: 10px; display: none;">
+                    <button class="edit-feedback" onclick="enableEditMode()">Edit Feedback</button>
+                </div>
+                <div id="feedback-message" class="feedback-message"></div>
+            </div>
+
+            <!-- GDPR Links -->
+            <div class="chat-footer">
+                <div class="footer-left">
+                    <a href="#" id="privacy-policy-link" onclick="showPolicy(event)">Privacy Policy</a>
+                    <a href="#" id="terms-link" onclick="showTerms(event)">Terms of Use</a>
+                    <a href="#" id="manage-data-link" onclick="showManageData(event)">Manage My Data</a>
+                    <button id="manage-consent-btn" class="manage-consent-btn" style="margin-left: 10px;"></button>
+                </div>
+            </div>
+
+            <div class="dropdown-content-container" id="dropdown-content-container" style="display: none;">
+                <div class="dropdown-content" id="dropdown-content"></div>
+                <div class="footer-actions">
+                    <button onclick="hideDropdown()">Hide</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentSessionId = null;
+    let selectedRating = null;
+    let recognition = null;
+    let isListening = false;
+    const apiBaseUrl = "http://localhost:5001";
+
+    // toggleChatbox()
+    function toggleChatbox() {
+        const inner = document.getElementById("chatbox-inner");
+        const icon = document.getElementById("toggle-icon");
+        const isHidden = inner.style.display === "none" || inner.style.display === "";
+        inner.style.display = isHidden ? "block" : "none";
+        icon.textContent = isHidden ? "–" : "+";
+    }
+
+    // Chat enable/disable
+    function enableChat() {
+        const inputContainer = document.querySelector(".input-container");
+        inputContainer.style.pointerEvents = "auto";
+        inputContainer.style.opacity = "1";
+    }
+
+    function disableChat() {
+        const inputContainer = document.querySelector(".input-container");
+        inputContainer.style.pointerEvents = "none";
+        inputContainer.style.opacity = "0.5";
+    }
+
+    // Consent display update
+    function updateConsentStatusDisplay(hasConsent, isWithdrawn) {
+        const btn = document.getElementById("manage-consent-btn");
+        if (!btn) return;
+
+        let badge = btn.querySelector(".consent-status-badge");
+        if (badge) badge.remove();
+
+        badge = document.createElement("span");
+        badge.className = "consent-status-badge";
+        badge.textContent = hasConsent && !isWithdrawn ? "Accepted" : "Not Accepted";
+        badge.classList.add(hasConsent ? "consent-accepted" : "consent-withdrawn");
+
+        btn.appendChild(badge);
+        btn.style.display = "inline-block";
+    }
+
+    function addSystemMessage(text) {
+        const chatBox = document.getElementById("chat-box");
+        const p = document.createElement("p");
+        p.className = "message system-message";
+        p.textContent = text;
+        chatBox.appendChild(p);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function checkConsent(sessionId) {
+        console.log("🔍 Checking consent for session:", sessionId);
+        fetch(`${apiBaseUrl}/api/v1/consent/check/${sessionId}`)
+            .then(res => res.json())
+            .then(data => {
+                console.log(" Consent response:", data);
+                if (data.can_proceed) {
+                    enableChat();
+                    updateConsentStatusDisplay(true, false);
+                    document.getElementById("consent-bubble").style.display = "none";
+                    loadMessageHistory();  //  Only load chat if consent is accepted
+                } else {
+                    disableChat();
+                    updateConsentStatusDisplay(false, true);
+                    document.getElementById("consent-bubble").style.display = "block";
+                }
+            })
+            .catch(err => {
+                console.error(" Consent check failed:", err);
+            });
+    }
+
+    function handleAcceptConsent() {
+        fetch(`${apiBaseUrl}/api/v1/consent/accept`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: currentSessionId })
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                enableChat();
+                updateConsentStatusDisplay(true, false);
+                document.getElementById("consent-bubble").style.display = "none";
+                addSystemMessage("Consent accepted. You can now use the chatbot.");
+            }
+        });
+    }
+
+    function handleWithdrawConsent() {
+        fetch(`${apiBaseUrl}/api/v1/consent/withdraw`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ session_id: currentSessionId })
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                disableChat();
+                updateConsentStatusDisplay(false, true);
+                document.getElementById("consent-bubble").style.display = "block";
+                addSystemMessage("Consent withdrawn. Chat disabled and data removed.");
+            }
+        });
+    }
+    window.handleWithdrawConsent = handleWithdrawConsent;
+
+    // GDPR dropdown
+    function showPolicy(e) {
+        e.preventDefault();
+        document.getElementById("dropdown-content").innerHTML =
+            "<p>This site collects data to improve your experience. No data is sold. See our privacy policy for details.</p>";
+        document.getElementById("dropdown-content-container").style.display = "block";
+    }
+
+    function showTerms(e) {
+        e.preventDefault();
+        document.getElementById("dropdown-content").innerHTML =
+            "<p>By using this chatbot, you agree to our terms of service and data handling practices.</p>";
+        document.getElementById("dropdown-content-container").style.display = "block";
+    }
+
+    function showManageData(e) {
+        e.preventDefault();
+        document.getElementById("dropdown-content").innerHTML =
+            "<p>You may withdraw consent at any time. This will delete all data associated with your session.</p>" +
+            "<button class='withdraw-btn' onclick='handleWithdrawConsent()'>Withdraw Consent</button>";
+        document.getElementById("dropdown-content-container").style.display = "block";
+    }
+
+    function hideDropdown() {
+        document.getElementById("dropdown-content-container").style.display = "none";
+    }
+
+    // Send chat message
+    function sendMessage() {
+        const input = document.getElementById("user-input");
+        const chatBox = document.getElementById("chat-box");
+        const spinner = document.getElementById("spinner");
+        const userInput = input.value.trim();
+        if (!userInput) return;
+
+        input.value = "";
+        chatBox.innerHTML += `<p class="message user-message">${userInput}</p>`;
+        spinner.style.display = "block";
+        spinner.textContent = "⏳ Typing...";
+
+        const start = performance.now();
+        const timer = setInterval(() => {
+            spinner.textContent = `⏳ Typing... ${(performance.now() - start) / 1000 | 0}s`;
+        }, 200);
+
+        fetch(`${apiBaseUrl}/api/v1/chat`, {
+            method: "POST",
+            body: new URLSearchParams({ user_input: userInput, session_id: currentSessionId }),
+            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        })
+            .then(res => res.body.getReader())
+            .then(reader => {
+                const decoder = new TextDecoder("utf-8");
+                const botMsg = document.createElement("p");
+                botMsg.className = "message bot-message";
+                chatBox.appendChild(botMsg);
+
+                function read() {
+                    return reader.read().then(({ done, value }) => {
+                        if (done) {
+                            clearInterval(timer);
+                            spinner.textContent = `🕒 Responded in ${(performance.now() - start) / 1000 | 0}s`;
+                            setTimeout(() => spinner.style.display = "none", 1500);
+                            chatBox.scrollTop = chatBox.scrollHeight;
+                            document.getElementById("show-feedback-btn").style.display = "block";
+                            return;
+                        }
+                        botMsg.innerHTML += decoder.decode(value);
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                        return read();
+                    });
+                }
+
+                return read();
+            })
+            .catch(err => {
+                clearInterval(timer);
+                spinner.style.display = "none";
+                chatBox.innerHTML += `<p class="message bot-message">Error: ${err.message}</p>`;
+            });
+    }
+
+    // Feedback
+    function selectSmiley(rating) {
+        selectedRating = rating;
+        document.querySelectorAll(".smiley-row span").forEach((el, i) =>
+            el.classList.toggle("selected", i + 1 === rating));
+    }
+
+    function showFeedback() {
+        document.getElementById("feedback-container").style.display = "block";
+        document.getElementById("show-feedback-btn").style.display = "none";
+    }
+
+    function hideFeedback() {
+        document.getElementById("feedback-container").style.display = "none";
+        document.getElementById("show-feedback-btn").style.display = "block";
+    }
+
+    function enableEditMode() {
+        document.getElementById("feedback-comment").disabled = false;
+        const msg = document.getElementById("feedback-message");
+        msg.innerText = "You can now edit your comment. Submit again to update.";
+        msg.style.color = "blue";
+    }
+
+    function submitFeedback() {
+        const comment = document.getElementById("feedback-comment").value;
+        const msg = document.getElementById("feedback-message");
+        if (!selectedRating) {
+            msg.innerText = "Please select a rating before submitting.";
+            msg.style.color = "red";
+            return;
+        }
+
+        fetch(`${apiBaseUrl}/api/v1/feedback`, {
+            method: "POST",
+            body: new URLSearchParams({
+                session_id: currentSessionId,
+                rating: selectedRating,
+                comment: comment
+            }),
+            headers: { "Content-Type": "application/x-www-form-urlencoded" }
+        })
+            .then(res => res.json())
+            .then(data => {
+                msg.innerText = data.message || "Thanks for your feedback!";
+                msg.style.color = "green";
+                document.getElementById("feedback-comment").disabled = true;
+                document.getElementById("edit-feedback-btn").style.display = "block";
+            })
+            .catch(() => {
+                msg.innerText = "Feedback failed. Try again.";
+                msg.style.color = "red";
+            });
+    }
+
+    // History
+    function loadMessageHistory() {
+        fetch(`${apiBaseUrl}/api/v1/history?session_id=${currentSessionId}`)
+            .then(res => res.json())
+            .then(data => {
+                const chatBox = document.getElementById("chat-box");
+                if (data.messages && data.messages.length > 0) {
+                    chatBox.innerHTML = "";
+                    data.messages.forEach(msg => {
+                        const p = document.createElement("p");
+                        p.className = "message " + (msg.type === "user" ? "user-message" : "bot-message");
+                        p.innerHTML = msg.content;
+                        chatBox.appendChild(p);
+                    });
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            });
+    }
+
+    // Voice
+    document.getElementById("voice-chat-btn").addEventListener("click", () => {
+        if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {
+            alert("Speech recognition not supported in your browser.");
+            return;
+        }
+
+        if (isListening) return stopSpeechRecognition();
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.lang = 'en-US';
+        recognition.interimResults = false;
+        recognition.maxAlternatives = 1;
+
+        isListening = true;
+        const btn = document.getElementById("voice-chat-btn");
+        btn.textContent = "🎙️ Listening...";
+        btn.classList.add("listening");
+
+        recognition.onresult = e => {
+            const transcript = e.results[0][0].transcript;
+            document.getElementById("user-input").value = transcript;
+            setTimeout(sendMessage, 400);
+        };
+
+        recognition.onerror = e => {
+            alert("STT error: " + e.error);
+            stopSpeechRecognition();
+        };
+
+        recognition.onend = stopSpeechRecognition;
+        recognition.start();
+    });
+
+    function stopSpeechRecognition() {
+        isListening = false;
+        const btn = document.getElementById("voice-chat-btn");
+        btn.textContent = "🎤";
+        btn.classList.remove("listening");
+        if (recognition) try { recognition.stop(); } catch {}
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+        const stored = localStorage.getItem("session_id");
+        document.getElementById("chatbox-inner").style.display = "none";
+        document.getElementById("toggle-icon").textContent = "+";
+
+        if (stored && stored !== "null" && stored !== "undefined") {
+            currentSessionId = stored;
+            document.getElementById("session-id").textContent = stored;
+            checkConsent(stored); // let this decide whether chat should load
+        } else {
+            createSession();
+        }
+
+        //  Consent Handling
+        document.getElementById("accept-consent-btn")?.addEventListener("click", handleAcceptConsent);
+        document.getElementById("user-input")?.addEventListener("keydown", e => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        //  Toggle
+        document.getElementById("chatbox-toggle")?.addEventListener("click", toggleChatbox);
+
+        //  GDPR Policy Links (WordPress-safe)
+        document.getElementById("privacy-policy-link")?.addEventListener("click", showPolicy);
+        document.getElementById("terms-link")?.addEventListener("click", showTerms);
+        document.getElementById("manage-data-link")?.addEventListener("click", showManageData);
+    });
+
+</script>
+</body>
+</html>
