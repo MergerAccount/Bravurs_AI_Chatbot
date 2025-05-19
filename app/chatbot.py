@@ -138,14 +138,12 @@ def handle_meta_questions(user_input, session_id):
     return "I'm not sure what you're referring to. Could you clarify?"
 
 def company_info_handler(user_input, session_id=None):
-    # Handle meta questions like "what was my last question"
     if is_last_question_request(user_input) or "last answer" in user_input.lower() or "summarize" in user_input.lower():
         return handle_meta_questions(user_input, session_id)
 
     detected_intent = classify_intent(user_input)
     recent_convo = get_recent_conversation(session_id)
 
-    # Handle request for human support
     if detected_intent == "Human Support Service Request":
         reply = (
             "For human support, contact us on WhatsApp at +31 6 12345678 or email support@bravur.com."
@@ -156,7 +154,11 @@ def company_info_handler(user_input, session_id=None):
             log_async(store_message, session_id, reply, "bot")
         return reply
 
-    # Handle IT Services & Trends questions using GPT
+    recent_convo = get_recent_conversation(session_id)
+
+    if detected_intent == "Unknown":
+        return "I'm here to answer questions about Bravur and IT services. How can I help?"
+
     if detected_intent == "IT Services & Trends":
         it_prompt = [
                         {"role": "system", "content": (
@@ -187,6 +189,12 @@ def company_info_handler(user_input, session_id=None):
             embedding = embed_query_cached(user_input)
             if embedding:
                 search_results = semantic_search(embedding, top_k=5)
+    # --- Search logic ---
+    search_results = hybrid_search(user_input, top_k=5)
+    if not search_results:
+        embedding = embed_query_cached(user_input)
+        if embedding:
+            search_results = semantic_search(embedding, top_k=5)
 
         if search_results:
             semantic_context = "\n\n".join([
@@ -205,7 +213,6 @@ def company_info_handler(user_input, session_id=None):
         else:
             reply = "I'm here to answer questions about Bravur and IT services. Could you rephrase or provide more detail?"
 
-    # Store and return the final reply
     if session_id:
         log_async(store_message, session_id, user_input, "user")
         log_async(store_message, session_id, reply, "bot")
