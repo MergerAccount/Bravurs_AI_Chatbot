@@ -36,7 +36,7 @@ def handle_chat():
     def generate():
         full_reply = ""
         try:
-            for chunk in company_info_handler_streaming(user_input, session_id):
+            for chunk in company_info_handler_streaming(user_input, session_id, language):
                 full_reply += chunk
                 yield chunk
         finally:
