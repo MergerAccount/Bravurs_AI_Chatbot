@@ -4,6 +4,7 @@ import json
 import threading
 from functools import lru_cache
 from hashlib import sha256
+
 from openai import OpenAI
 from fuzzywuzzy import fuzz
 
@@ -137,7 +138,7 @@ def handle_meta_questions(user_input, session_id):
 
     return "I'm not sure what you're referring to. Could you clarify?"
 
-def company_info_handler(user_input, session_id=None):
+def company_info_handler(user_input, session_id=None, language="nl-NL"):
     if is_last_question_request(user_input) or "last answer" in user_input.lower() or "summarize" in user_input.lower():
         return handle_meta_questions(user_input, session_id)
 
@@ -189,8 +190,14 @@ def company_info_handler(user_input, session_id=None):
         for row_id, title, content, _ in search_results
     ])
 
+    language_instruction = ""
+    if language == "nl-NL":
+        language_instruction = "Je moet altijd in het Nederlands antwoorden, ongeacht in welke taal de gebruiker spreekt."
+    elif language == "en-US":
+        language_instruction = "You must always respond in English, regardless of the language the user speaks in."
+
     system_prompt = (
-        f"You are a helpful assistant for Bravur. "
+        f"You are a helpful assistant for Bravur. {language_instruction}"
         f"Answer the user based on this information. Cite Row IDs used:\n\n{semantic_context}"
     )
 
@@ -205,7 +212,7 @@ def company_info_handler(user_input, session_id=None):
     return reply
 
 
-def company_info_handler_streaming(user_input, session_id=None):
+def company_info_handler_streaming(user_input, session_id=None, language="nl-NL"):
     detected_intent = classify_intent(user_input)
 
     if detected_intent == "Human Support Service Request":
@@ -232,8 +239,16 @@ def company_info_handler_streaming(user_input, session_id=None):
         for row_id, title, content, _ in search_results
     ])
 
+
+    #Language instruction based on selectedLanguage
+    language_instruction = ""
+    if language == "nl-NL":
+        language_instruction = "Je moet altijd in het Nederlands antwoorden, ongeacht in welke taal de gebruiker spreekt."
+    elif language == "en-US":
+        language_instruction = "You must always respond in English, regardless of the language the user speaks in."
+
     system_prompt = (
-        f"You are a helpful assistant for Bravur. "
+        f"You are a helpful assistant for Bravur. {language_instruction}. "
         f"Answer the user based on this information. Cite Row IDs used:\n\n{semantic_context}"
     )
 
