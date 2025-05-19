@@ -46,6 +46,8 @@ def estimate_tokens(text):
     return max(1, int(len(text.split()) * 0.75))
 
 def get_recent_conversation(session_id, max_tokens=400):
+    latest_language_message = None
+
     if not session_id:
         return []
 
@@ -69,6 +71,11 @@ def get_recent_conversation(session_id, max_tokens=400):
             break
         selected.insert(0, msg)
         total_tokens += tokens
+
+    if latest_language_message:
+        # Remove any existing instances first to avoid duplication
+        selected = [msg for msg in selected if "[SYSTEM] Language changed" not in msg.get("content", "")]
+        selected.insert(0, latest_language_message)
 
     return selected
 
