@@ -1,0 +1,13 @@
+{
+  "memory_prompts": [
+    "what was my last question",
+    "what was my previous question",
+    "can you remind me my last question",
+    "what did I ask before",
+    "what was my earlier question",
+    "show me my previous question",
+    "tell me my last question",
+    "repeat my last question",
+    "what did I say last"
+  ]
+}
