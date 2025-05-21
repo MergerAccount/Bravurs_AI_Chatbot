@@ -62,26 +62,40 @@ def speech_to_text_api():
 
     return jsonify(result)
 
+
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
-    language = request.json.get("language") if request.is_json else None
-    result = speech_to_speech(language=language)  # no audio_file, mic only
-    if not result:
-        return jsonify({"error": "Speech processing failed"}), 500
-
-    with open(result["audio_path"], "rb") as f:
-        audio_base64 = base64.b64encode(f.read()).decode("utf-8")
-
     try:
-        os.remove(result["audio_path"])
-    except Exception as e:
-        print(f"Error removing temp file: {e}")
+        # Get language and session ID from form data
+        language = request.form.get('language')
+        session_id = request.form.get('session_id')
 
-    return jsonify({
-        "user_text": result["original_text"],
-        "bot_text": result["response_text"],
-        "audio_base64": audio_base64
-    })
+        print(f"Received STS request with language: {language}, session_id: {session_id}")
+
+        # Use the updated speech_to_speech function with both parameters
+        result = speech_to_speech(language=language, session_id=session_id)
+
+        if not result:
+            print("No valid speech input detected or processing failed")
+            return jsonify(
+                {"error": "Speech processing failed", "message": "No speech detected. Please try again."}), 400
+
+        with open(result["audio_path"], "rb") as f:
+            audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+        try:
+            os.remove(result["audio_path"])
+        except Exception as e:
+            print(f"Error removing temp file: {e}")
+
+        return jsonify({
+            "user_text": result["original_text"],
+            "bot_text": result["response_text"],
+            "audio_base64": audio_base64
+        })
+    except Exception as e:
+        print(f"Error in speech-to-speech: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 
 frontend = Blueprint("frontend", __name__)
@@ -108,6 +122,7 @@ def check_consent(session_id):
 @routes.route("/language_change", methods=["POST"])
 def language_change():
     session_id = request.form.get("session_id")
+    language = request.form.get("language")
     from_language = request.form.get("from_language")
     to_language = request.form.get("to_language")
 
