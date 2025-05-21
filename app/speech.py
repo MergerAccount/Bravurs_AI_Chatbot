@@ -14,7 +14,7 @@ speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_r
 
 def text_to_speech(text, language="en-US"):
     if language == "nl-NL":
-        speech_config.speech_synthesis_voice_name = "nl-NL-ColetteNeural"
+        speech_config.speech_synthesis_voice_name = "nl-NL-FennaNeural"
     else:
         speech_config.speech_synthesis_voice_name = "en-US-JennyNeural"
 
@@ -120,7 +120,6 @@ def speech_to_speech(language=None):
     user_text = stt_result["text"]
     detected_language = stt_result["language"]
 
-    # Get chatbot response text from your chat endpoint
     response_text = get_chatbot_response(user_text)
 
     tts_output_path = text_to_speech(response_text, language=detected_language)
