@@ -7,6 +7,7 @@ from app.database import create_chat_session
 from flask import Blueprint, request, jsonify, render_template, session
 from app.controllers.consent_controller import handle_accept_consent, handle_withdraw_consent, check_consent_status
 from app.speech import speech_to_speech, save_audio_file
+import base64
 
 # === API ROUTES under /api/v1 ===
 routes = Blueprint("routes", __name__, url_prefix="/api/v1")
@@ -68,15 +69,19 @@ def handle_speech_to_speech():
     if not result:
         return jsonify({"error": "Speech processing failed"}), 500
 
-    @after_this_request
-    def cleanup(response):
-        try:
-            os.remove(result["audio_path"])
-        except Exception as e:
-            print(f"Error removing temp file: {e}")
-        return response
+    with open(result["audio_path"], "rb") as f:
+        audio_base64 = base64.b64encode(f.read()).decode("utf-8")
 
-    return send_file(result["audio_path"], mimetype="audio/wav")
+    try:
+        os.remove(result["audio_path"])
+    except Exception as e:
+        print(f"Error removing temp file: {e}")
+
+    return jsonify({
+        "user_text": result["original_text"],
+        "bot_text": result["response_text"],
+        "audio_base64": audio_base64
+    })
 
 
 frontend = Blueprint("frontend", __name__)
