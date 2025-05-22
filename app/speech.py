@@ -110,33 +110,16 @@ def speech_to_text(language=None):
         }
 
 
-def speech_to_speech(language=None):
-    stt_result = speech_to_text(language=language)
-
-    if stt_result["status"] != "success" or not stt_result["text"]:
-        print("No valid speech input detected")
-        return None
-
-    user_text = stt_result["text"]
-    detected_language = stt_result["language"]
-
-    response_text = get_chatbot_response(user_text)
-
-    tts_output_path = text_to_speech(response_text, language=detected_language)
-
-    return {
-        "audio_path": tts_output_path,
-        "original_text": user_text,
-        "response_text": response_text,
-        "language": detected_language
-    }
-
-def get_chatbot_response(user_text, session_id=None):
+def get_chatbot_response(user_text, session_id=None, language=None):
     url = "http://localhost:5000/api/v1/chat"
     data = {
         "user_input": user_text,
         "session_id": session_id or ""
     }
+
+    if language:
+        data["language"] = language
+        print(f"Adding language to request: {language}")
 
     try:
         response = requests.post(url, data=data, stream=True)
@@ -152,8 +135,37 @@ def get_chatbot_response(user_text, session_id=None):
         return f"Error contacting chat service: {str(e)}"
 
 
-def save_audio_file(audio_data):
+def speech_to_speech(language=None, session_id=None):
+    print(f"Starting speech_to_speech with language: {language}, session_id: {session_id}")
+    stt_result = speech_to_text(language=language)
 
+    print(f"Speech-to-text result: {stt_result}")
+
+    if stt_result["status"] != "success" or not stt_result["text"]:
+        print("No valid speech input detected")
+        return None
+
+    user_text = stt_result["text"]
+    print(f"Recognized text: {user_text}")
+
+    response_language = language if language else stt_result["language"]
+    print(f"Using response language: {response_language}")
+
+    # Make sure to pass session_id to get_chatbot_response
+    response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
+    print(f"Got response text: {response_text[:50]}...")
+
+    tts_output_path = text_to_speech(response_text, language=response_language)
+    print(f"Generated speech at: {tts_output_path}")
+
+    return {
+        "audio_path": tts_output_path,
+        "original_text": user_text,
+        "response_text": response_text,
+        "language": response_language
+    }
+
+def save_audio_file(audio_data):
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
     temp_file.write(audio_data)
     temp_file.close()
