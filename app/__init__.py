@@ -1,5 +1,7 @@
 import os
 from flask import Flask
+from flask_cors import CORS
+
 from app.routes import routes, frontend
 import app.logging_config
 
@@ -13,6 +15,8 @@ def create_app():
         template_folder=templates_path,
         static_folder=static_path
     )
+
+    CORS(app, origins=["http://bravur.local", "http://localhost", "http://127.0.0.1"])
 
     app.register_blueprint(routes)
     app.register_blueprint(frontend)

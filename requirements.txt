@@ -8,3 +8,4 @@ fuzzywuzzy==0.18.0
 azure-cognitiveservices-speech==1.43.0
 groq==0.24.0
 azure-core~=1.34.0
+flask-cors==5.0.0

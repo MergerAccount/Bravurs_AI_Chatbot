@@ -8,9 +8,19 @@ from flask import Blueprint, request, jsonify, render_template, session
 from app.controllers.consent_controller import handle_accept_consent, handle_withdraw_consent, check_consent_status
 from app.speech import speech_to_speech, save_audio_file
 import base64
+from flask import Flask, Blueprint, request, send_file, after_this_request, jsonify, Response, stream_with_context, render_template
+
 
 # === API ROUTES under /api/v1 ===
 routes = Blueprint("routes", __name__, url_prefix="/api/v1")
+
+@routes.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
 
 @routes.route("/chat", methods=["POST"])
 def chat():
