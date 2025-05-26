@@ -6,8 +6,9 @@ from app.controllers.history_controller import handle_history_fetch
 from app.database import create_chat_session, store_message
 from flask import Blueprint, request, jsonify, render_template, session
 from app.controllers.consent_controller import handle_accept_consent, handle_withdraw_consent, check_consent_status
-from app.speech import speech_to_speech, save_audio_file
+from app.speech import speech_to_speech, save_audio_file, reset_session_intro
 import base64
+import uuid
 
 # === API ROUTES under /api/v1 ===
 routes = Blueprint("routes", __name__, url_prefix="/api/v1")
@@ -72,6 +73,12 @@ def handle_speech_to_speech():
 
         print(f"Received STS request with language: {language}, session_id: {session_id}")
 
+        # Handle missing session_id
+        if not session_id or session_id == 'null' or session_id == 'undefined':
+            print("Warning: No valid session_id provided, creating new one")
+            session_id = str(uuid.uuid4())
+            print(f"Generated new session_id: {session_id}")
+
         # Use the updated speech_to_speech function with both parameters
         result = speech_to_speech(language=language, session_id=session_id)
 
@@ -96,6 +103,30 @@ def handle_speech_to_speech():
     except Exception as e:
         print(f"Error in speech-to-speech: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+
+@routes.route('/api/v1/new_session', methods=['POST'])
+def new_session():
+    """Create a new session and return the session ID"""
+    session_id = str(uuid.uuid4())
+
+    # Reset intro status for this new session (just in case)
+    reset_session_intro(session_id)
+
+    return jsonify({
+        "status": "success",
+        "session_id": session_id
+    })
+
+@routes.route('/api/v1/end_session', methods=['POST'])
+def end_session():
+    """Optional: endpoint to explicitly end a session"""
+    session_id = request.json.get('session_id')
+    if session_id:
+        # Clear session-specific data
+        reset_session_intro(session_id)
+        return jsonify({"status": "success", "message": "Session ended"})
+    return jsonify({"status": "error", "message": "No session ID provided"})
 
 
 frontend = Blueprint("frontend", __name__)
@@ -133,3 +164,4 @@ def language_change():
         return jsonify({"status": "success"})
 
     return jsonify({"status": "error", "message": "No session ID provided"}), 400
+
