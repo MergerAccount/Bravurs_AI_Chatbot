@@ -172,8 +172,6 @@ def company_info_handler(user_input, session_id=None, language="nl-NL"):
             log_async(store_message, session_id, user_input, "user")
             log_async(store_message, session_id, reply, "bot")
 
-            # Mood detect and reply
-            reply = shorten_reply(reply)
         return reply
 
     recent_convo = get_recent_conversation(session_id)
@@ -223,6 +221,7 @@ def company_info_handler(user_input, session_id=None, language="nl-NL"):
         language_instruction = "You must always respond in English, regardless of the language the user speaks in."
 
     mood = detect_mood(user_input)
+
     tone_instruction = (
         "If the user seems frustrated, use a calm, understanding tone. Do not repeat apologies multiple times. Avoid sounding scripted."
     )
@@ -235,6 +234,7 @@ def company_info_handler(user_input, session_id=None, language="nl-NL"):
         f"You are a helpful and conversational assistant working for Bravur. {language_instruction} "
         f"{tone_instruction} Use the summaries below to answer the user clearly. Only include the most relevant point(s) and explain them briefly. "
         f"Do **not** repeat the content word-for-word. Your response must be friendly and clear, and **should not exceed 2-3 short sentences**. "
+        f"Add at least one relevant emoji per sentence to make the reply lively and expressive. Emojis must be directly related to the meaning of each sentence and should enhance the friendliness of the tone."
         f"Cite Row IDs if helpful:\n\n{semantic_context}"
     )
 
@@ -247,7 +247,6 @@ def company_info_handler(user_input, session_id=None, language="nl-NL"):
         log_async(store_message, session_id, user_input, "user")
         log_async(store_message, session_id, reply, "bot")
 
-        reply = shorten_reply(reply)
     return reply
 
 def company_info_handler_streaming(user_input, session_id=None, language="nl-NL"):
@@ -298,13 +297,13 @@ def company_info_handler_streaming(user_input, session_id=None, language="nl-NL"
         f"You are a conversational, helpful assistant for Bravur. {language_instruction} {tone_instruction} "
         f"Use this content to help the user, and make the answer friendly and respond in a maximum of 2 concise sentences. "
         f"Do not repeat full content, shorten it as much as you can. Be to the point and friendly:\n\n{semantic_context}"
+        f"Add at least one relevant emoji per sentence to make the reply lively and expressive. Emojis must be directly related to the meaning of each sentence and should enhance the friendliness of the tone."
     )
 
     gpt_prompt = [{"role": "system", "content": system_prompt}] + recent_convo + [{"role": "user", "content": user_input}]
 
     full_reply = ""
-    full_reply = strip_html_paragraphs(full_reply)
-    full_reply = clean_and_clip_reply(full_reply)
+
     try:
 
         stream = client.chat.completions.create(
@@ -312,11 +311,13 @@ def company_info_handler_streaming(user_input, session_id=None, language="nl-NL"
             messages=gpt_prompt,
             stream=True
         )
+        cleaned = strip_html_paragraphs(full_reply)
+        clipped = clean_and_clip_reply(cleaned)
 
         for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:
-                full_reply += delta
+                clipped += delta
                 yield delta
 
     except Exception as e:
