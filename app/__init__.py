@@ -1,23 +1,10 @@
-import os
 from flask import Flask
 from flask_cors import CORS
-
 from app.routes import routes, frontend
-import app.logging_config
 
 def create_app():
-    base_dir = os.path.abspath(os.path.dirname(__file__))
-    templates_path = os.path.join(base_dir, "..", "static", "templates")
-    static_path = os.path.join(base_dir, "..", "static")
-
-    app = Flask(
-        __name__,
-        template_folder=templates_path,
-        static_folder=static_path
-    )
-
-    CORS(app, origins=["http://bravur.local", "http://localhost", "http://127.0.0.1"])
-
-    app.register_blueprint(routes)
+    app = Flask(__name__, template_folder='../static/templates')  # Relative to app/ directory
+    CORS(app, origins=["*"])
+    app.register_blueprint(routes, url_prefix='/api/v1')
     app.register_blueprint(frontend)
     return app
