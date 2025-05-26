@@ -3,7 +3,9 @@ from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
 import tempfile
 import requests
+from app.database import get_session_messages
 
+_intro_said_sessions = set()
 load_dotenv()
 
 speech_key = os.getenv("AZURE_SPEECH_KEY")
@@ -135,8 +137,38 @@ def get_chatbot_response(user_text, session_id=None, language=None):
         return f"Error contacting chat service: {str(e)}"
 
 
+def is_first_bot_response_in_session(session_id):
+    """
+    Check if this is the first bot response in the session by looking at message history
+    """
+    if not session_id:
+        return True  # If no session ID, treat as first interaction
+
+    try:
+        # Get all messages for this session
+        messages = get_session_messages(session_id)
+
+        # Count bot messages (excluding system messages)
+        bot_message_count = 0
+        for message in messages:
+            if message.get('type') == 'bot' or message.get('sender') == 'bot':
+                bot_message_count += 1
+
+        # If there are no bot messages yet, this is the first one
+        return bot_message_count == 0
+
+    except Exception as e:
+        print(f"Error checking message history: {e}")
+        # If we can't check the history, fall back to the session tracking
+        return session_id not in _intro_said_sessions
+
+
 def speech_to_speech(language=None, session_id=None):
+    print(f"=== DEBUGGING SESSION ===")
     print(f"Starting speech_to_speech with language: {language}, session_id: {session_id}")
+    print(f"Session ID type: {type(session_id)}")
+    print(f"Session ID value: '{session_id}'")
+
     stt_result = speech_to_text(language=language)
 
     print(f"Speech-to-text result: {stt_result}")
@@ -151,9 +183,54 @@ def speech_to_speech(language=None, session_id=None):
     response_language = language if language else stt_result["language"]
     print(f"Using response language: {response_language}")
 
-    # Make sure to pass session_id to get_chatbot_response
+    # Debug session messages in detail
+    is_first_interaction = False
+    if session_id:
+        session_messages = get_session_messages(session_id)
+        print(f"=== SESSION DEBUG ===")
+        print(f"Session messages count: {len(session_messages)}")
+        print(f"Raw session messages: {session_messages}")
+
+        # Count and list all message types
+        user_messages = []
+        bot_messages = []
+        system_messages = []
+
+        for i, (timestamp, content, session, msg_type) in enumerate(session_messages):
+            print(f"Message {i}: session='{session}', type='{msg_type}', content='{content[:50]}...'")
+            if msg_type == "user":
+                user_messages.append(content)
+            elif msg_type == "bot":
+                bot_messages.append(content)
+            elif msg_type == "system":
+                system_messages.append(content)
+
+        print(f"User messages count: {len(user_messages)}")
+        print(f"Bot messages count: {len(bot_messages)}")
+        print(f"System messages count: {len(system_messages)}")
+
+        is_first_interaction = len(bot_messages) == 0
+    else:
+        print("=== NO SESSION ID ===")
+        is_first_interaction = True
+
+    print(f"Is first interaction: {is_first_interaction}")
+    print(f"=== END SESSION DEBUG ===")
+
+    # Get the chatbot response
     response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
     print(f"Got response text: {response_text[:50]}...")
+
+    # Add joke only if this is the first bot response in this session
+    if is_first_interaction:
+        if response_language == "nl-NL":
+            intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. "
+        else:
+            intro = "Please go easy on my voice, I'm just an AI. "
+        response_text = intro + response_text
+        print("*** ADDED INTRO JOKE TO RESPONSE ***")
+    else:
+        print("*** NO INTRO ADDED - NOT FIRST INTERACTION ***")
 
     tts_output_path = text_to_speech(response_text, language=response_language)
     print(f"Generated speech at: {tts_output_path}")
@@ -165,8 +242,29 @@ def speech_to_speech(language=None, session_id=None):
         "language": response_language
     }
 
+
 def save_audio_file(audio_data):
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
     temp_file.write(audio_data)
     temp_file.close()
     return temp_file.name
+
+
+def reset_session_intro(session_id):
+    """
+    Helper function to reset the intro status for a session.
+    Call this when a new session starts or when you want to reset the intro.
+    """
+    if session_id in _intro_said_sessions:
+        _intro_said_sessions.remove(session_id)
+        print(f"Reset intro status for session: {session_id}")
+
+
+def clear_old_sessions():
+    """
+    Helper function to clear old session tracking.
+    You might want to call this periodically to prevent memory buildup.
+    """
+    global _intro_said_sessions
+    _intro_said_sessions.clear()
+    print("Cleared all session intro tracking")
