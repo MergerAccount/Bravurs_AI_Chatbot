@@ -4,6 +4,73 @@ import azure.cognitiveservices.speech as speechsdk
 import tempfile
 import requests
 from app.database import get_session_messages
+import re
+from difflib import SequenceMatcher
+
+
+class BravurCorrector:
+    def __init__(self):
+        # Known misrecognitions of Bravur
+        self.exact_corrections = {
+            "barber": "Bravur",
+            "bravo": "Bravur",
+            "barbara": "Bravur",
+            "brevard": "Bravur",
+            "bravoure": "Bravur",
+            "bravure": "Bravur",
+            "braver": "Bravur",
+            "bravor": "Bravur",
+            "bravour": "Bravur",
+            "brabur": "Bravur",
+            "brapur": "Bravur"
+        }
+
+        self.similarity_threshold = 0.65
+
+    def similarity_score(self, word1, word2):
+        return SequenceMatcher(None, word1.lower(), word2.lower()).ratio()
+
+    def is_likely_bravur(self, word):
+        word_clean = word.lower().strip('.,!?;:')
+
+        if word_clean in self.exact_corrections:
+            return True
+
+        if self.similarity_score(word_clean, "bravur") > self.similarity_threshold:
+            return True
+
+        if (word_clean.startswith('bra') and
+                len(word_clean) >= 5 and len(word_clean) <= 8):
+            if self.similarity_score(word_clean, "bravur") > 0.5:
+                return True
+
+        return False
+
+    def correct_text(self, text):
+        if not text:
+            return text
+
+        words = text.split()
+        corrected_words = []
+
+        for word in words:
+            punctuation = ""
+            clean_word = word
+
+            while clean_word and clean_word[-1] in '.,!?;:':
+                punctuation = clean_word[-1] + punctuation
+                clean_word = clean_word[:-1]
+
+            if self.is_likely_bravur(clean_word):
+                corrected_words.append("Bravur" + punctuation)
+            else:
+                corrected_words.append(word)
+
+        return " ".join(corrected_words)
+
+    def add_known_misrecognition(self, misrecognition):
+        self.exact_corrections[misrecognition.lower()] = "Bravur"
+
 
 _intro_said_sessions = set()
 load_dotenv()
@@ -12,6 +79,8 @@ speech_key = os.getenv("AZURE_SPEECH_KEY")
 service_region = os.getenv("AZURE_SPEECH_REGION")
 
 speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+
+bravur_corrector = BravurCorrector()
 
 
 def text_to_speech(text, language="en-US"):
@@ -83,10 +152,17 @@ def speech_to_text(language=None):
                 detected_language = "unknown"
 
         print(f"Detected language: {detected_language}")
-        print(f"Recognized text: {result.text}")
+        print(f"Original recognized text: {result.text}")
+
+        corrected_text = bravur_corrector.correct_text(result.text)
+
+        if corrected_text != result.text:
+            print(f"Bravur correction applied: '{result.text}' -> '{corrected_text}'")
+
+        print(f"Final recognized text: {corrected_text}")
 
         return {
-            "text": result.text,
+            "text": corrected_text,
             "language": detected_language,
             "status": "success"
         }
@@ -224,9 +300,9 @@ def speech_to_speech(language=None, session_id=None):
     # Add joke only if this is the first bot response in this session
     if is_first_interaction:
         if response_language == "nl-NL":
-            intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. "
+            intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. Maar om je vraag te beantwoorden: "
         else:
-            intro = "Please go easy on my voice, I'm just an AI. "
+            intro = "Please go easy on my voice, I'm just an AI. But to answer your question: "
         response_text = intro + response_text
         print("*** ADDED INTRO JOKE TO RESPONSE ***")
     else:
@@ -268,3 +344,8 @@ def clear_old_sessions():
     global _intro_said_sessions
     _intro_said_sessions.clear()
     print("Cleared all session intro tracking")
+
+
+def add_bravur_misrecognition(misrecognition):
+    bravur_corrector.add_known_misrecognition(misrecognition)
+    print(f"Added new Bravur misrecognition: '{misrecognition}' -> 'Bravur'")
