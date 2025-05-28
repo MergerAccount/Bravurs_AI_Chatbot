@@ -3,8 +3,8 @@ import requests
 import json
 import logging
 
-API_URL = "http://localhost:5000/api/v1/chat"  # Change this to your running endpoint
-SESSION_URL = "http://localhost:5000/api/v1/session"  # Endpoint to get new session
+API_URL = "http://127.0.0.1:5000/api/v1/chat"  # Change this to your running endpoint
+SESSION_URL = "http://127.0.0.1:5000/api/v1/session/create"  # Endpoint to get new session
 
 # Load prompts from JSON file
 with open("test_prompts_bravur.json", "r", encoding="utf-8") as f:
@@ -22,12 +22,26 @@ def session_id():
     try:
         res = requests.post(SESSION_URL)  # or .get() depending on your API
         res.raise_for_status()
-        return res.json().get("session_id")
+        session_id = res.json().get("session_id")
+
+        # Change language to English for testing
+        lang_res = requests.post("http://127.0.0.1:5000/api/v1/language_change", data={
+            "session_id": session_id,
+            "language": "en-US",
+            "from_language": "nl-NL",
+            "to_language": "en-US"
+        })
+        lang_res.raise_for_status()
+
+        # Accept consent for this session
+        consent_res = requests.post("http://127.0.0.1:5000/api/v1/consent/accept", json={"session_id": session_id})
+        consent_res.raise_for_status()
+        return session_id
     except Exception as e:
         logging.error(f"Failed to get session ID: {e}")
         pytest.skip("Skipping tests because no session ID could be obtained")
 @pytest.mark.parametrize("test_case", test_cases)
-def test_chatbot_responses(test_case):
+def test_chatbot_responses(test_case, session_id):
     prompt = test_case["prompt"]
     expected_keywords = test_case.get("expected_keywords", [])
     expect_error = test_case.get("expect_error", False)
@@ -38,9 +52,25 @@ def test_chatbot_responses(test_case):
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={"user_input": prompt, "session_id": session_id}
         )
-        assert res.status_code == 200, f"API Error: {res.status_code}"
-        response_text = res.json().get("response", "")
 
+        assert res.status_code == 200, f"API Error: {res.status_code}"
+
+        # ✅ Try parsing JSON, else fallback to plain text
+        content_type = res.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            response_text = res.json().get("response", "")
+        else:
+            print(f"⚠️ Expected JSON but got: {content_type}")
+            response_text = res.text.strip()
+
+        if not response_text:
+            raise ValueError("Received an empty response.")
+
+        # ✅ Language verification (optional check)
+        if not response_text.lower().startswith("bravur") and not response_text.isascii():
+            raise AssertionError("Response is likely not in English.")
+
+        # ✅ Validate response
         if expect_error:
             assert "[Error" in response_text or "couldn’t find" in response_text.lower()
         elif expected_keywords:
@@ -49,5 +79,10 @@ def test_chatbot_responses(test_case):
             assert response_text.strip(), "Empty response received"
 
     except Exception as e:
+        print("⚠️ Failed during test execution.")
+        print(f"Prompt: {prompt}")
+        print(f"Raw response:\n{res.text}")
+        print(f"Exception:\n{e}")
         logging.exception(f"Test case failed: {prompt}")
         assert False, f"Exception occurred during test: {e}"
+
