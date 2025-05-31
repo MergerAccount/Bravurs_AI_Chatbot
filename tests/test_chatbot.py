@@ -50,7 +50,7 @@ def test_chatbot_responses(test_case, session_id):
         res = requests.post(
             API_URL,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={"user_input": prompt, "session_id": session_id}
+            data={"user_input": prompt, "session_id": session_id, "language": "en",}
         )
 
         assert res.status_code == 200, f"API Error: {res.status_code}"

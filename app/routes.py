@@ -1,5 +1,7 @@
 import os
 from flask import Blueprint, request, send_file, after_this_request, jsonify, Response, stream_with_context, render_template
+
+from app.chatbot import session_language_map
 from app.controllers.chat_controller import handle_chat
 from app.controllers.feedback_controller import handle_feedback_submission
 from app.controllers.history_controller import handle_history_fetch
@@ -127,6 +129,8 @@ def language_change():
     to_language = request.form.get("to_language")
 
     if session_id:
+        session_language_map[session_id] = to_language
+
         # Store a system message indicating language change
         language_message = f"[SYSTEM] Language changed from {from_language} to {to_language}. All responses should now be in {'Dutch' if to_language == 'nl-NL' else 'English'}."
         store_message(session_id, language_message, "system")

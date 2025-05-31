@@ -1,6 +1,6 @@
 from flask import request, jsonify, Response, stream_with_context
 import logging
-from app.chatbot import company_info_handler_streaming
+from app.chatbot import company_info_handler_streaming, update_language_for_session, company_info_handler
 from app.database import create_chat_session, store_message
 
 # Handle user chat POST request and stream GPT response
@@ -28,6 +28,9 @@ def handle_chat():
                 "response": "Sorry, I'm having trouble with your session. Please try again.",
                 "session_id": None
             })
+
+    # Update session language
+    update_language_for_session(session_id, language)
 
     # Store user message before processing
     store_message(session_id, user_input, "user")

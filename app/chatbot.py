@@ -18,6 +18,8 @@ from app.agentConnector import AgentConnector
 client = OpenAI(api_key=OPENAI_API_KEY)
 agent_connector = AgentConnector()
 
+session_language_map = {}
+
 embedding_cache = {}
 
 # Common prompts to recall past questions
@@ -145,9 +147,14 @@ def handle_meta_questions(user_input, session_id):
 
     return "I'm not sure what you're referring to. Could you clarify?"
 
-def company_info_handler(user_input, session_id=None, language="nl-NL"):
-    if is_last_question_request(user_input) or "last answer" in user_input.lower() or "summarize" in user_input.lower():
-        return handle_meta_questions(user_input, session_id)
+def company_info_handler(user_input, session_id=None, language=None):
+    if not language:
+        if session_id and session_id in session_language_map:
+            language = session_language_map[session_id]
+        else:
+            language = "nl-NL"  # default fallback
+    print(f"[DEBUG] Using language: {language} for session: {session_id}")
+
 
     detected_intent = classify_intent(user_input)
 
@@ -276,6 +283,14 @@ def company_info_handler_streaming(user_input, session_id=None, language="nl-NL"
     except Exception as e:
         logging.error(f"Streaming error: {e}")
         yield "\n[Error generating response]"
+
+def get_language_for_session(session_id):
+    # Default to Dutch
+    return session_language_map.get(session_id, "nl-NL")
+
+def update_language_for_session(session_id: str, language: str):
+    if session_id and language:
+        session_language_map[session_id] = language
 
 
 
