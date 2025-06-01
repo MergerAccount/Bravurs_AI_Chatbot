@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import azure.cognitiveservices.speech as speechsdk
 import tempfile
 import requests
-from app.database import get_session_messages
+from app.database import get_session_messages, store_message
 import re
 from difflib import SequenceMatcher
 
@@ -72,11 +72,16 @@ class BravurCorrector:
         self.exact_corrections[misrecognition.lower()] = "Bravur"
 
 
-_intro_said_sessions = set()
 load_dotenv()
 
 speech_key = os.getenv("AZURE_SPEECH_KEY")
 service_region = os.getenv("AZURE_SPEECH_REGION")
+
+# Validate Azure credentials
+if not speech_key or not service_region:
+    print("ERROR: Azure Speech credentials not found in environment variables!")
+    print(f"AZURE_SPEECH_KEY exists: {bool(speech_key)}")
+    print(f"AZURE_SPEECH_REGION exists: {bool(service_region)}")
 
 speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
 
@@ -109,37 +114,74 @@ def text_to_speech(text, language="en-US"):
 
 
 def speech_to_text(language=None):
-    speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+    print(f"=== SPEECH TO TEXT DEBUG ===")
+    print(f"Input language: {language}")
+    print(f"Azure Speech Key exists: {bool(speech_key)}")
+    print(f"Azure Speech Region: {service_region}")
+
+    # Create fresh speech config for each call
+    speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+
+    # Configure audio input with better settings
     audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
 
     if language == "nl-NL":
-        speech_config.speech_recognition_language = "nl-NL"
-        speech_recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config,
-            audio_config=audio_config
-        )
-        print("Listening for Dutch speech...")
+        speech_config_stt.speech_recognition_language = "nl-NL"
+        print("Configured for Dutch speech recognition")
     elif language == "en-US":
-        speech_config.speech_recognition_language = "en-US"
-        speech_recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config,
-            audio_config=audio_config
-        )
-        print("Listening for English speech...")
+        speech_config_stt.speech_recognition_language = "en-US"
+        print("Configured for English speech recognition")
     else:
         print("Using language auto-detection...")
-        auto_detect_source_language_config = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
-            languages=["nl-NL", "en-US"]
-        )
+        # Set a default language for better recognition
+        speech_config_stt.speech_recognition_language = "nl-NL"  # Default to Dutch
+
+    # Configure recognition settings for better performance
+    speech_config_stt.set_property(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "8000")
+    speech_config_stt.set_property(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "2000")
+    speech_config_stt.set_property(speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, "2000")
+
+    if language and language != "auto":
         speech_recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config,
-            audio_config=audio_config,
-            auto_detect_source_language_config=auto_detect_source_language_config
+            speech_config=speech_config_stt,
+            audio_config=audio_config
         )
+        print(f"Listening for {language} speech...")
+    else:
+        print("Using auto-detection with fallback...")
+        try:
+            auto_detect_source_language_config = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
+                languages=["nl-NL", "en-US"]
+            )
+            speech_recognizer = speechsdk.SpeechRecognizer(
+                speech_config=speech_config_stt,
+                audio_config=audio_config,
+                auto_detect_source_language_config=auto_detect_source_language_config
+            )
+        except Exception as e:
+            print(f"Auto-detection failed, falling back to Dutch: {e}")
+            speech_recognizer = speechsdk.SpeechRecognizer(
+                speech_config=speech_config_stt,
+                audio_config=audio_config
+            )
 
     print("Speak now...")
 
-    result = speech_recognizer.recognize_once_async().get()
+    try:
+        # Try continuous recognition with timeout
+        result = speech_recognizer.recognize_once_async().get()
+
+        print(f"Recognition result reason: {result.reason}")
+        print(f"Recognition result text: '{result.text}'")
+
+    except Exception as e:
+        print(f"Recognition exception: {e}")
+        return {
+            "text": "",
+            "language": "",
+            "status": "error",
+            "message": f"Recognition exception: {str(e)}"
+        }
 
     if result.reason == speechsdk.ResultReason.RecognizedSpeech:
         if language:
@@ -148,18 +190,21 @@ def speech_to_text(language=None):
             try:
                 auto_detect_result = speechsdk.AutoDetectSourceLanguageResult(result)
                 detected_language = auto_detect_result.language
+                print(f"Auto-detected language: {detected_language}")
             except:
-                detected_language = "unknown"
+                detected_language = "nl-NL"  # Default fallback
+                print("Language detection failed, using Dutch as default")
 
         print(f"Detected language: {detected_language}")
-        print(f"Original recognized text: {result.text}")
+        print(f"Original recognized text: '{result.text}'")
 
+        # Apply Bravur correction
         corrected_text = bravur_corrector.correct_text(result.text)
 
         if corrected_text != result.text:
             print(f"Bravur correction applied: '{result.text}' -> '{corrected_text}'")
 
-        print(f"Final recognized text: {corrected_text}")
+        print(f"Final recognized text: '{corrected_text}'")
 
         return {
             "text": corrected_text,
@@ -167,24 +212,32 @@ def speech_to_text(language=None):
             "status": "success"
         }
     elif result.reason == speechsdk.ResultReason.NoMatch:
-        print("No speech could be recognized")
-        return {
-            "text": "",
-            "language": "",
-            "status": "error",
-            "message": "No speech recognized."
-        }
-    elif result.reason == speechsdk.ResultReason.Canceled:
-        cancellation_details = result.cancellation_details
-        print(f"Speech recognition canceled: {cancellation_details.reason}")
-        if cancellation_details.reason == speechsdk.CancellationReason.Error:
-            print(f"Error details: {cancellation_details.error_details}")
+        print("No speech could be recognized - possible causes:")
+        print("1. Microphone not working or not accessible")
+        print("2. No speech detected within timeout period")
+        print("3. Speech too quiet or unclear")
+        print("4. Background noise interference")
 
         return {
             "text": "",
             "language": "",
             "status": "error",
-            "message": f"Speech recognition canceled: {cancellation_details.reason}. Details: {cancellation_details.error_details}"
+            "message": "No speech recognized. Please check your microphone and speak clearly."
+        }
+    elif result.reason == speechsdk.ResultReason.Canceled:
+        cancellation_details = result.cancellation_details
+        print(f"Speech recognition canceled: {cancellation_details.reason}")
+
+        error_message = "Speech recognition canceled"
+        if cancellation_details.reason == speechsdk.CancellationReason.Error:
+            print(f"Error details: {cancellation_details.error_details}")
+            error_message = f"Recognition error: {cancellation_details.error_details}"
+
+        return {
+            "text": "",
+            "language": "",
+            "status": "error",
+            "message": error_message
         }
 
 
@@ -218,104 +271,135 @@ def is_first_bot_response_in_session(session_id):
     Check if this is the first bot response in the session by looking at message history
     """
     if not session_id:
-        return True  # If no session ID, treat as first interaction
+        print("No session ID provided, treating as first interaction")
+        return True
 
     try:
         # Get all messages for this session
         messages = get_session_messages(session_id)
+        print(f"Retrieved {len(messages)} messages for session {session_id}")
 
-        # Count bot messages (excluding system messages)
+        # Count bot messages
         bot_message_count = 0
-        for message in messages:
-            if message.get('type') == 'bot' or message.get('sender') == 'bot':
-                bot_message_count += 1
+
+        for i, message in enumerate(messages):
+            print(f"Message {i}: {message}")
+
+            # The correct format from get_session_messages is:
+            # (message_id, content, timestamp, message_type)
+            if isinstance(message, tuple) and len(message) >= 4:
+                message_id, content, timestamp, message_type = message[:4]
+                print(f"Message type identified as: {message_type}")
+
+                if message_type == 'bot':
+                    bot_message_count += 1
+            else:
+                print(f"Unexpected message format: {type(message)} - {message}")
+                continue
+
+        print(f"Found {bot_message_count} bot messages in session {session_id}")
 
         # If there are no bot messages yet, this is the first one
-        return bot_message_count == 0
+        is_first = bot_message_count == 0
+
+        print(f"{'This is the first' if is_first else 'This is NOT the first'} bot response for session {session_id}")
+        return is_first
 
     except Exception as e:
         print(f"Error checking message history: {e}")
-        # If we can't check the history, fall back to the session tracking
-        return session_id not in _intro_said_sessions
+        # If we can't check the history, assume it's the first interaction
+        return True
 
 
 def speech_to_speech(language=None, session_id=None):
-    print(f"=== DEBUGGING SESSION ===")
-    print(f"Starting speech_to_speech with language: {language}, session_id: {session_id}")
+    """
+    Main speech-to-speech function that properly handles session management
+
+    Args:
+        language: Language preference for the conversation
+        session_id: Existing session ID to continue the conversation
+
+    Returns:
+        Dictionary with audio_path, texts, language, and session_id
+    """
+    print(f"=== SPEECH TO SPEECH SESSION DEBUG ===")
+    print(f"Input - language: {language}, session_id: {session_id}")
     print(f"Session ID type: {type(session_id)}")
     print(f"Session ID value: '{session_id}'")
 
+    # Step 1: Get speech input from user
     stt_result = speech_to_text(language=language)
-
     print(f"Speech-to-text result: {stt_result}")
 
     if stt_result["status"] != "success" or not stt_result["text"]:
         print("No valid speech input detected")
-        return None
+        return {
+            "error": "No valid speech input detected. Please check your microphone and try speaking again.",
+            "session_id": session_id,
+            "debug_info": stt_result
+        }
 
     user_text = stt_result["text"]
     print(f"Recognized text: {user_text}")
 
+    # Step 2: Determine response language
     response_language = language if language else stt_result["language"]
     print(f"Using response language: {response_language}")
 
-    # Debug session messages in detail
-    is_first_interaction = False
-    if session_id:
-        session_messages = get_session_messages(session_id)
-        print(f"=== SESSION DEBUG ===")
-        print(f"Session messages count: {len(session_messages)}")
-        print(f"Raw session messages: {session_messages}")
+    # Step 3: Validate and ensure we have a session_id
+    if not session_id:
+        print("ERROR: No session_id provided to speech_to_speech!")
+        return {
+            "error": "No session ID provided",
+            "session_id": None
+        }
 
-        # Count and list all message types
-        user_messages = []
-        bot_messages = []
-        system_messages = []
-
-        for i, (timestamp, content, session, msg_type) in enumerate(session_messages):
-            print(f"Message {i}: session='{session}', type='{msg_type}', content='{content[:50]}...'")
-            if msg_type == "user":
-                user_messages.append(content)
-            elif msg_type == "bot":
-                bot_messages.append(content)
-            elif msg_type == "system":
-                system_messages.append(content)
-
-        print(f"User messages count: {len(user_messages)}")
-        print(f"Bot messages count: {len(bot_messages)}")
-        print(f"System messages count: {len(system_messages)}")
-
-        is_first_interaction = len(bot_messages) == 0
+    # Step 4: Store the user message in the database
+    user_message_id = store_message(session_id, user_text, "user")
+    if not user_message_id:
+        print(f"WARNING: Failed to store user message in session {session_id}")
     else:
-        print("=== NO SESSION ID ===")
-        is_first_interaction = True
+        print(f"Stored user message {user_message_id} in session {session_id}")
 
-    print(f"Is first interaction: {is_first_interaction}")
-    print(f"=== END SESSION DEBUG ===")
+    # Step 5: Check if this is the first bot response BEFORE getting the response
+    is_first_interaction = is_first_bot_response_in_session(session_id)
+    print(f"Is first bot interaction in session: {is_first_interaction}")
 
-    # Get the chatbot response
+    # Step 6: Get the chatbot response
     response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
     print(f"Got response text: {response_text[:50]}...")
 
-    # Add joke only if this is the first bot response in this session
+    # Step 7: Add intro joke only if this is the first bot response in this session
+    final_response_text = response_text
     if is_first_interaction:
         if response_language == "nl-NL":
             intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. Maar om je vraag te beantwoorden: "
         else:
             intro = "Please go easy on my voice, I'm just an AI. But to answer your question: "
-        response_text = intro + response_text
+        final_response_text = intro + response_text
         print("*** ADDED INTRO JOKE TO RESPONSE ***")
     else:
         print("*** NO INTRO ADDED - NOT FIRST INTERACTION ***")
 
-    tts_output_path = text_to_speech(response_text, language=response_language)
+    # Step 8: Store the bot response in the database
+    bot_message_id = store_message(session_id, final_response_text, "bot")
+    if not bot_message_id:
+        print(f"WARNING: Failed to store bot message in session {session_id}")
+    else:
+        print(f"Stored bot message {bot_message_id} in session {session_id}")
+
+    # Step 9: Convert response to speech
+    tts_output_path = text_to_speech(final_response_text, language=response_language)
     print(f"Generated speech at: {tts_output_path}")
 
+    # Step 10: Return complete result
     return {
         "audio_path": tts_output_path,
         "original_text": user_text,
-        "response_text": response_text,
-        "language": response_language
+        "response_text": final_response_text,
+        "language": response_language,
+        "session_id": session_id,  # Return the same session_id to maintain continuity
+        "is_first_interaction": is_first_interaction
     }
 
 
@@ -329,23 +413,90 @@ def save_audio_file(audio_data):
 def reset_session_intro(session_id):
     """
     Helper function to reset the intro status for a session.
-    Call this when a new session starts or when you want to reset the intro.
+    Since we're now using database-based checking, this function
+    doesn't need to do anything, but kept for backward compatibility.
     """
-    if session_id in _intro_said_sessions:
-        _intro_said_sessions.remove(session_id)
-        print(f"Reset intro status for session: {session_id}")
-
-
-def clear_old_sessions():
-    """
-    Helper function to clear old session tracking.
-    You might want to call this periodically to prevent memory buildup.
-    """
-    global _intro_said_sessions
-    _intro_said_sessions.clear()
-    print("Cleared all session intro tracking")
+    print(f"Reset intro status called for session: {session_id} (no action needed with DB-based checking)")
 
 
 def add_bravur_misrecognition(misrecognition):
     bravur_corrector.add_known_misrecognition(misrecognition)
     print(f"Added new Bravur misrecognition: '{misrecognition}' -> 'Bravur'")
+
+
+# New helper function to validate session continuity
+def validate_session_continuity(session_id):
+    """
+    Validate that a session exists and return relevant info about it
+    """
+    if not session_id:
+        return {"valid": False, "message": "No session ID provided"}
+
+    try:
+        messages = get_session_messages(session_id)
+        return {
+            "valid": True,
+            "message_count": len(messages),
+            "has_bot_messages": any(msg[3] == 'bot' for msg in messages if len(msg) >= 4)
+        }
+    except Exception as e:
+        return {"valid": False, "message": f"Session validation error: {e}"}
+
+
+def update_session_voice_usage(session_id):
+    """
+    Mark a session as having used voice features
+    """
+    from app.database import get_db_connection
+
+    conn = get_db_connection()
+    if conn is None:
+        return False
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE chat_session SET voice_enabled = TRUE WHERE session_id = %s",
+            (session_id,)
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print(f"Marked session {session_id} as voice-enabled")
+        return True
+    except Exception as e:
+        print(f"Error updating session voice usage: {e}")
+        if conn:
+            conn.close()
+        return False
+
+
+# Test function to verify Azure Speech setup
+def test_azure_speech_setup():
+    """
+    Test function to verify Azure Speech Service is working
+    """
+    print("=== TESTING AZURE SPEECH SETUP ===")
+
+    if not speech_key or not service_region:
+        print("❌ Azure credentials missing!")
+        return False
+
+    try:
+        # Test TTS
+        test_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+        test_config.speech_synthesis_voice_name = "en-US-JennyNeural"
+
+        synthesizer = speechsdk.SpeechSynthesizer(speech_config=test_config)
+        result = synthesizer.speak_text_async("Testing Azure Speech").get()
+
+        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+            print("✅ Azure Speech Service connection successful!")
+            return True
+        else:
+            print(f"❌ Azure Speech Service test failed: {result.reason}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Azure Speech Service error: {e}")
+        return False
