@@ -65,6 +65,7 @@ def create_chat_session():
         cursor.close()
         conn.close()
         logging.info(f"Created new chat session: {session_id}")
+        logging.info(f"Created session {session_id} - intro will be added to first STS interaction automatically")
         return session_id
     except Exception as e:
         logging.error(f"Error creating chat session: {e}")
