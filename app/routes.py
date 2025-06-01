@@ -83,14 +83,8 @@ def handle_speech_to_speech():
         language = request.form.get('language')
         session_id = request.form.get('session_id')
 
-        print(f"=== STS REQUEST DEBUG ===")
-        print(f"Received language: {language}")
-        print(f"Received session_id: {session_id}")
-        print(f"Session ID type: {type(session_id)}")
-
         # Validate session_id - DO NOT create new session here!
         if not session_id or session_id in ['null', 'undefined', '']:
-            print("ERROR: No valid session_id provided to /sts endpoint")
             return jsonify({
                 "error": "Session ID is required",
                 "message": "Please create a session first using /session/create",
@@ -100,14 +94,11 @@ def handle_speech_to_speech():
         # Validate that the session exists in the database
         session_validation = validate_session_continuity(session_id)
         if not session_validation["valid"]:
-            print(f"ERROR: Invalid session_id {session_id}: {session_validation['message']}")
-            return jsonify({
+             return jsonify({
                 "error": "Invalid session ID",
                 "message": session_validation["message"],
                 "status": "error"
             }), 400
-
-        print(f"Session validation passed: {session_validation}")
 
         # Mark this session as using voice features
         update_session_voice_usage(session_id)
@@ -126,9 +117,6 @@ def handle_speech_to_speech():
                 "status": "error"
             }), 400
 
-        # Process successful result
-        print(f"Speech-to-speech successful, processing audio file: {result['audio_path']}")
-
         # Convert audio to base64
         with open(result["audio_path"], "rb") as f:
             audio_base64 = base64.b64encode(f.read()).decode("utf-8")
@@ -136,7 +124,6 @@ def handle_speech_to_speech():
         # Clean up temporary audio file
         try:
             os.remove(result["audio_path"])
-            print(f"Cleaned up temporary audio file: {result['audio_path']}")
         except Exception as e:
             print(f"Warning: Error removing temp file: {e}")
 
@@ -152,7 +139,6 @@ def handle_speech_to_speech():
         })
 
     except Exception as e:
-        print(f"ERROR in speech-to-speech endpoint: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -172,13 +158,11 @@ def new_session():
         session_id = create_chat_session()
 
         if not session_id:
-            print("ERROR: Failed to create new session")
             return jsonify({
                 "error": "Failed to create session",
                 "status": "error"
             }), 500
 
-        print(f"SUCCESS: Created new session {session_id}")
         return jsonify({
             "status": "success",
             "session_id": session_id,
@@ -186,7 +170,6 @@ def new_session():
         })
 
     except Exception as e:
-        print(f"ERROR creating new session: {e}")
         return jsonify({
             "error": f"Failed to create session: {str(e)}",
             "status": "error"
@@ -222,7 +205,6 @@ def validate_session():
         })
 
     except Exception as e:
-        print(f"ERROR validating session: {e}")
         return jsonify({
             "valid": False,
             "message": f"Validation error: {str(e)}",
@@ -241,7 +223,6 @@ def end_session():
         session_id = data.get('session_id')
 
         if session_id:
-            print(f"Ending session: {session_id}")
             # Could add session cleanup logic here if needed
             return jsonify({
                 "status": "success",
@@ -254,32 +235,20 @@ def end_session():
         }), 400
 
     except Exception as e:
-        print(f"ERROR ending session: {e}")
         return jsonify({
             "status": "error",
             "message": f"Error ending session: {str(e)}"
         }), 500
 
 
-# Remove the duplicate /api/v1/new_session route since we have /session/new now
-# Keep only one session creation endpoint to avoid confusion
-
-
 frontend = Blueprint("frontend", __name__)
-
 
 @frontend.route("/", methods=["GET"])
 def serve_home():
-    """
-    Serve the main page and create an initial session
-    """
     try:
         session_id = create_chat_session()
-        print(f"Created initial session for homepage: {session_id}")
         return render_template("index.html", session_id=session_id)
     except Exception as e:
-        print(f"ERROR creating session for homepage: {e}")
-        # Render template without session_id, let frontend handle it
         return render_template("index.html", session_id=None)
 
 
@@ -301,16 +270,11 @@ def check_consent(session_id):
 
 @routes.route("/language_change", methods=["POST"])
 def language_change():
-    """
-    Handle language changes within a session
-    """
     try:
         session_id = request.form.get("session_id")
         language = request.form.get("language")
         from_language = request.form.get("from_language")
         to_language = request.form.get("to_language")
-
-        print(f"Language change request: session={session_id}, from={from_language}, to={to_language}")
 
         if not session_id:
             return jsonify({
@@ -332,7 +296,6 @@ def language_change():
         message_stored = store_message(session_id, language_message, "system")
 
         if message_stored:
-            print(f"Language change recorded for session {session_id}")
             return jsonify({
                 "status": "success",
                 "message": f"Language changed to {to_language}"
@@ -344,7 +307,6 @@ def language_change():
             }), 500
 
     except Exception as e:
-        print(f"ERROR in language_change: {e}")
         return jsonify({
             "status": "error",
             "message": f"Error changing language: {str(e)}"
