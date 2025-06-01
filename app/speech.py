@@ -114,8 +114,6 @@ def text_to_speech(text, language="en-US"):
 def speech_to_text(language=None):
     # Create fresh speech config for each call
     speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
-
-    # Configure audio input with better settings
     audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
 
     if language == "nl-NL":
@@ -127,32 +125,10 @@ def speech_to_text(language=None):
     else:
         speech_config_stt.speech_recognition_language = "nl-NL"  # Default to Dutch
 
-    # Configure recognition settings for better performance
-    speech_config_stt.set_property(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "8000")
-    speech_config_stt.set_property(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "2000")
-    speech_config_stt.set_property(speechsdk.PropertyId.Speech_SegmentationSilenceTimeoutMs, "2000")
-
-    if language and language != "auto":
-        speech_recognizer = speechsdk.SpeechRecognizer(
-            speech_config=speech_config_stt,
-            audio_config=audio_config
-        )
-        print(f"Listening for {language} speech...")
-    else:
-        try:
-            auto_detect_source_language_config = speechsdk.languageconfig.AutoDetectSourceLanguageConfig(
-                languages=["nl-NL", "en-US"]
-            )
-            speech_recognizer = speechsdk.SpeechRecognizer(
-                speech_config=speech_config_stt,
-                audio_config=audio_config,
-                auto_detect_source_language_config=auto_detect_source_language_config
-            )
-        except Exception as e:
-            speech_recognizer = speechsdk.SpeechRecognizer(
-                speech_config=speech_config_stt,
-                audio_config=audio_config
-            )
+    speech_recognizer = speechsdk.SpeechRecognizer(
+        speech_config=speech_config_stt,
+        audio_config=audio_config,
+    )
 
     print("Speak now...")
 
