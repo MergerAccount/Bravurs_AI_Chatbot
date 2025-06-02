@@ -2,9 +2,16 @@ import pytest
 import requests
 import json
 import logging
+from docx import Document
+from datetime import datetime
+
 
 API_URL = "http://127.0.0.1:5000/api/v1/chat"  # Change this to your running endpoint
 SESSION_URL = "http://127.0.0.1:5000/api/v1/session/create"  # Endpoint to get new session
+
+doc = Document()
+doc.add_heading("Chatbot Test Results", 0)
+doc.add_paragraph(f"Generated on: {datetime.now()}\n")
 
 # Load prompts from JSON file
 with open("test_prompts_bravur.json", "r", encoding="utf-8") as f:
@@ -78,7 +85,17 @@ def test_chatbot_responses(test_case, session_id):
         else:
             assert response_text.strip(), "Empty response received"
 
+        # Log passed test
+        doc.add_heading(f"Prompt: {prompt}", level=2)
+        doc.add_paragraph(f"Response:\n{response_text}")
+        doc.add_paragraph("✅ Test passed.\n")
+
+
     except Exception as e:
+        doc.add_heading(f"Prompt: {prompt}", level=2)
+        doc.add_paragraph(f"Raw Response:\n{res.text}")
+        doc.add_paragraph(f"❌ Test failed. Exception:\n{e}")
+
         print("⚠️ Failed during test execution.")
         print(f"Prompt: {prompt}")
         print(f"Raw response:\n{res.text}")
@@ -86,3 +103,7 @@ def test_chatbot_responses(test_case, session_id):
         logging.exception(f"Test case failed: {prompt}")
         assert False, f"Exception occurred during test: {e}"
 
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    doc.add_paragraph(f"\nTest session finished with status: {exitstatus}")
+    doc.save("chatbot_test_results.docx")
