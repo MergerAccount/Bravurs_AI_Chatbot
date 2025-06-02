@@ -9,8 +9,21 @@ from app.controllers.consent_controller import handle_accept_consent, handle_wit
 from app.speech import speech_to_speech, save_audio_file
 import base64
 
-# === API ROUTES under /api/v1 ===
+# API ROUTES under /api/v1
 routes = Blueprint("routes", __name__, url_prefix="/api/v1")
+
+# helper to get client IP, considering proxies
+def get_client_ip():
+    """
+    Retrieves the client's IP address, checking for X-Forwarded-For header
+    if the application is behind a proxy.
+    """
+    # Check for X-Forwarded-For header, which is common when behind a proxy/load balancer
+    # If multiple IPs are present (comma-separated), the first one is typically the client's IP.
+    x_forwarded_for = request.headers.get('X-Forwarded-For')
+    if x_forwarded_for:
+        return x_forwarded_for.split(',')[0].strip()
+    return request.remote_addr
 
 @routes.route("/chat", methods=["POST"])
 def chat():
@@ -26,6 +39,9 @@ def get_history():
 
 @routes.route("/session/create", methods=["POST"])
 def create_session():
+    user_ip = get_client_ip() # get the user's IP address
+    # print IP to console for verification - can remove later
+    print(f"API Session Creation - User IP: {user_ip}")
     session_id = create_chat_session()
     if session_id:
         return jsonify({"session_id": session_id})
@@ -66,7 +82,7 @@ def speech_to_text_api():
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
     try:
-        # Get language and session ID from form data
+        # get language and session ID from form data
         language = request.form.get('language')
         session_id = request.form.get('session_id')
 
@@ -102,7 +118,10 @@ frontend = Blueprint("frontend", __name__)
 
 @frontend.route("/", methods=["GET"])
 def serve_home():
-    session_id = create_chat_session()
+    user_ip = get_client_ip() # get the user's IP address
+    # print IP to console for verification
+    print(f"Frontend Home Page - User IP: {user_ip}")
+    session_id = create_chat_session() # Removed user_ip from here
     return render_template("index.html", session_id=session_id)
 
 @routes.route('/consent/accept', methods=['POST'])
