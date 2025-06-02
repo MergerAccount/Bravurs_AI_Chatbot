@@ -71,7 +71,7 @@ class BravurCorrector:
     def add_known_misrecognition(self, misrecognition):
         self.exact_corrections[misrecognition.lower()] = "Bravur"
 
-
+        
 load_dotenv()
 
 speech_key = os.getenv("AZURE_SPEECH_KEY")
@@ -86,7 +86,36 @@ speech_config = speechsdk.SpeechConfig(subscription=speech_key, region=service_r
 bravur_corrector = BravurCorrector()
 
 
+def remove_emojis(text):
+    """Remove emojis from text for TTS processing"""
+    emoji_pattern = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # emoticons
+        "\U0001F300-\U0001F5FF"  # symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # flags (iOS)
+        "\U00002700-\U000027BF"  # dingbats
+        "\U0001F900-\U0001F9FF"  # supplemental symbols
+        "\U00002600-\U000026FF"  # miscellaneous symbols
+        "\U0001F170-\U0001F251"
+        "]+",
+        flags=re.UNICODE
+    )
+    return emoji_pattern.sub('', text).strip()
+
+
+def prepare_text_for_tts(text):
+    """Prepare text for text-to-speech by removing emojis and cleaning up"""
+    clean_text = remove_emojis(text)
+    clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+
+    return clean_text
+
+
 def text_to_speech(text, language="en-US"):
+    # Clean the text for TTS - this is the key change!
+    clean_text = prepare_text_for_tts(text)
+
     if language == "nl-NL":
         speech_config.speech_synthesis_voice_name = "nl-NL-FennaNeural"
     else:
@@ -101,10 +130,13 @@ def text_to_speech(text, language="en-US"):
         audio_config=speechsdk.audio.AudioOutputConfig(filename=output_path)
     )
 
-    result = speech_synthesizer.speak_text_async(text).get()
+    # Use the cleaned text instead of the original
+    result = speech_synthesizer.speak_text_async(clean_text).get()
 
     if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
         print("Speech synthesized successfully!")
+        print(f"Original text: {text[:50]}...")
+        print(f"Clean text for TTS: {clean_text[:50]}...")
         return output_path
     else:
         print(f"Error: {result.reason}")
