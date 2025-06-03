@@ -33,3 +33,4 @@ session_id=228&rating=4&comment=Look similiar like Chatgpt.
 # Returns an array of all user and bot messages for a session
 # GET http://localhost:5000/api/v1/history?session_id={{session_id}}
 GET http://localhost:5000/api/v1/history?session_id=228
+
