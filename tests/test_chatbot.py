@@ -91,9 +91,12 @@ def test_chatbot_responses(test_case, session_id):
 
         # Test expectations
         if expect_error:
-            assert "[Error" in response_text or "not supported" in response_text.lower() \
-                   or "not allowed" in response_text.lower() or "unsupported" in response_text.lower(), \
-                   "Expected error but response seems normal"
+            safe_denials = ["i'm here to answer", "i can only help", "not allowed", "not supported",
+                            "keep it about bravur"]
+            if not any(phrase in response_text.lower() for phrase in safe_denials):
+                raise AssertionError(
+                    "Expected denial or error, but response seemed too normal or off-topic was allowed.")
+
         elif expected_keywords:
             assert is_acceptable_paraphrase(response_text, expected_keywords), \
                 f"Response lacks expected keywords or paraphrases: {response_text}"
