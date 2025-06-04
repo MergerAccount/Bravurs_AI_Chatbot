@@ -1,3 +1,5 @@
+# Add these updates to your existing routes.py file
+
 import os
 from flask import Blueprint, request, send_file, after_this_request, jsonify, Response, stream_with_context, \
     render_template
@@ -17,6 +19,7 @@ routes = Blueprint("routes", __name__, url_prefix="/api/v1")
 
 @routes.route("/chat", methods=["POST"])
 def chat():
+    """Modified to handle WordPress requests with session_id and language"""
     return handle_chat()
 
 
@@ -32,7 +35,9 @@ def get_history():
 
 @routes.route("/session/create", methods=["POST"])
 def create_session():
-    """Create a new chat session"""
+
+    """Create a new chat session for WordPress frontend"""
+    
     session_id = create_chat_session()
     if session_id:
         print(f"Created new session via /session/create: {session_id}")
@@ -40,8 +45,44 @@ def create_session():
     return jsonify({"error": "Failed to create session", "status": "error"}), 500
 
 
+# === CONSENT ROUTES ===
+@routes.route('/consent/accept', methods=['POST'])
+def accept_consent():
+    """Handle consent acceptance from WordPress"""
+    return handle_accept_consent()
+
+@routes.route('/consent/withdraw', methods=['POST'])
+def withdraw_consent():
+    """Handle consent withdrawal from WordPress"""
+    return handle_withdraw_consent()
+
+@routes.route('/consent/check/<session_id>', methods=['GET'])
+def check_consent(session_id):
+    """Check consent status for a session"""
+    result = check_consent_status(session_id)
+    return jsonify(result)
+
+ # === LANGUAGE ROUTE ===
+@routes.route("/language_change", methods=["POST"])
+def language_change():
+    """Handle language change from WordPress frontend"""
+    session_id = request.form.get("session_id")
+    language = request.form.get("language")
+    from_language = request.form.get("from_language")
+    to_language = request.form.get("to_language")
+
+    if session_id:
+        # Store a system message indicating language change
+        language_message = f"[SYSTEM] Language changed from {from_language} to {to_language}. All responses should now be in {'Dutch' if to_language == 'nl-NL' else 'English'}."
+        store_message(session_id, language_message, "system")
+        return jsonify({"status": "success"})
+
+    return jsonify({"status": "error", "message": "No session ID provided"}), 400
+
+# === SPEECH ROUTES ===
 @routes.route("/tts", methods=["POST"])
 def text_to_speech_api():
+    """Text-to-speech endpoint"""
     from app.speech import text_to_speech
     data = request.get_json()
     text = data.get("text", "")
@@ -63,15 +104,14 @@ def text_to_speech_api():
 
 @routes.route("/stt", methods=["POST"])
 def speech_to_text_api():
+    """Speech-to-text endpoint for WordPress voice input"""
     from app.speech import speech_to_text
 
     data = request.get_json() or {}
     language = data.get("language")
 
     result = speech_to_text(language)
-
     return jsonify(result)
-
 
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
@@ -106,18 +146,16 @@ def handle_speech_to_speech():
         # Call speech_to_speech with the validated session_id
         result = speech_to_speech(language=language, session_id=session_id)
 
-        # Check if speech_to_speech returned an error
-        if not result or "error" in result:
-            error_msg = result.get("error", "Speech processing failed") if result else "No speech detected"
-            print(f"Speech-to-speech processing failed: {error_msg}")
+        if not result:
+            print("No valid speech input detected or processing failed")
             return jsonify({
-                "error": error_msg,
-                "message": "No speech detected or processing failed. Please try again.",
+                "error": "Speech processing failed", 
+                "message": "No speech detected. Please try again.",
                 "session_id": session_id,
                 "status": "error"
             }), 400
 
-        # Convert audio to base64
+
         with open(result["audio_path"], "rb") as f:
             audio_base64 = base64.b64encode(f.read()).decode("utf-8")
 
@@ -240,11 +278,31 @@ def end_session():
             "message": f"Error ending session: {str(e)}"
         }), 500
 
+# === HEALTH CHECK ===
+@routes.route("/health", methods=["GET"])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({"status": "healthy", "service": "Bravur Chatbot API"})
 
+# === CORS HEADERS FOR WORDPRESS ===
+@routes.after_request
+def after_request(response):
+    """Add CORS headers for WordPress integration"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
+# === FRONTEND ROUTES (Keep for testing) ===
 frontend = Blueprint("frontend", __name__)
 
 @frontend.route("/", methods=["GET"])
 def serve_home():
+  
+    """Keep this for direct testing of your Python app"""
+    session_id = create_chat_session()
+    return render_template("index.html", session_id=session_id)
+  
     try:
         session_id = create_chat_session()
         return render_template("index.html", session_id=session_id)
@@ -252,62 +310,3 @@ def serve_home():
         return render_template("index.html", session_id=None)
 
 
-@routes.route('/consent/accept', methods=['POST'])
-def accept_consent():
-    return handle_accept_consent()
-
-
-@routes.route('/consent/withdraw', methods=['POST'])
-def withdraw_consent():
-    return handle_withdraw_consent()
-
-
-@routes.route('/consent/check/<session_id>', methods=['GET'])
-def check_consent(session_id):
-    result = check_consent_status(session_id)
-    return jsonify(result)
-
-
-@routes.route("/language_change", methods=["POST"])
-def language_change():
-    try:
-        session_id = request.form.get("session_id")
-        language = request.form.get("language")
-        from_language = request.form.get("from_language")
-        to_language = request.form.get("to_language")
-
-        if not session_id:
-            return jsonify({
-                "status": "error",
-                "message": "No session ID provided"
-            }), 400
-
-        # Validate session exists
-        validation = validate_session_continuity(session_id)
-        if not validation["valid"]:
-            return jsonify({
-                "status": "error",
-                "message": f"Invalid session: {validation['message']}"
-            }), 400
-
-        # Store a system message indicating language change
-        language_message = f"[SYSTEM] Language changed from {from_language} to {to_language}. All responses should now be in {'Dutch' if to_language == 'nl-NL' else 'English'}."
-
-        message_stored = store_message(session_id, language_message, "system")
-
-        if message_stored:
-            return jsonify({
-                "status": "success",
-                "message": f"Language changed to {to_language}"
-            })
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Failed to record language change"
-            }), 500
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Error changing language: {str(e)}"
-        }), 500
