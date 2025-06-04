@@ -15,7 +15,10 @@ def handle_chat():
     print(f"Content-Type: {request.content_type}")
     print(f"Method: {request.method}")
     print(f"Form data: {dict(request.form)}")
-    print(f"JSON data: {request.get_json()}")
+    try:
+        print(f"JSON data: {request.get_json(silent=True)}")
+    except Exception as e:
+        print(f"JSON parse error: {e}")
     print(f"Headers: {dict(request.headers)}")
 
     # Determine request type and extract data accordingly
@@ -78,6 +81,7 @@ def handle_chat():
                 return jsonify({"error": error_msg}), 500
             else:
                 return jsonify({"response": error_msg, "session_id": None})
+
 
     # Store user message before processing
     store_message(session_id, user_input, "user")
