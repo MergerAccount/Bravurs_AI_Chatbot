@@ -62,7 +62,7 @@ def check_consent(session_id):
     result = check_consent_status(session_id)
     return jsonify(result)
 
-# === LANGUAGE ROUTE ===
+ # === LANGUAGE ROUTE ===
 @routes.route("/language_change", methods=["POST"])
 def language_change():
     """Handle language change from WordPress frontend"""
@@ -310,62 +310,3 @@ def serve_home():
         return render_template("index.html", session_id=None)
 
 
-@routes.route('/consent/accept', methods=['POST'])
-def accept_consent():
-    return handle_accept_consent()
-
-
-@routes.route('/consent/withdraw', methods=['POST'])
-def withdraw_consent():
-    return handle_withdraw_consent()
-
-
-@routes.route('/consent/check/<session_id>', methods=['GET'])
-def check_consent(session_id):
-    result = check_consent_status(session_id)
-    return jsonify(result)
-
-
-@routes.route("/language_change", methods=["POST"])
-def language_change():
-    try:
-        session_id = request.form.get("session_id")
-        language = request.form.get("language")
-        from_language = request.form.get("from_language")
-        to_language = request.form.get("to_language")
-
-        if not session_id:
-            return jsonify({
-                "status": "error",
-                "message": "No session ID provided"
-            }), 400
-
-        # Validate session exists
-        validation = validate_session_continuity(session_id)
-        if not validation["valid"]:
-            return jsonify({
-                "status": "error",
-                "message": f"Invalid session: {validation['message']}"
-            }), 400
-
-        # Store a system message indicating language change
-        language_message = f"[SYSTEM] Language changed from {from_language} to {to_language}. All responses should now be in {'Dutch' if to_language == 'nl-NL' else 'English'}."
-
-        message_stored = store_message(session_id, language_message, "system")
-
-        if message_stored:
-            return jsonify({
-                "status": "success",
-                "message": f"Language changed to {to_language}"
-            })
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Failed to record language change"
-            }), 500
-
-    except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"Error changing language: {str(e)}"
-        }), 500
