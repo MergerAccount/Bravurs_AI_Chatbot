@@ -1,5 +1,3 @@
-# Add these updates to your existing routes.py file
-
 import os
 from flask import Blueprint, request, send_file, after_this_request, jsonify, Response, stream_with_context, render_template
 from app.controllers.chat_controller import handle_chat
