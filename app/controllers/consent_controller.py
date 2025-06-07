@@ -6,8 +6,15 @@ from app.database import get_db_connection
 
 def handle_accept_consent():
     try:
-        data = request.get_json()
-        session_id = data.get('session_id')
+        # Handle both JSON and form data from WordPress
+        if request.content_type and 'application/json' in request.content_type:
+            data = request.get_json()
+            session_id = data.get('session_id')
+        else:
+            # WordPress sends form data
+            session_id = request.form.get('session_id')
+
+        print(f"Accept consent for session: {session_id}")
 
         if not session_id:
             return jsonify({"success": False, "error": "No session ID provided"}), 400
@@ -45,17 +52,26 @@ def handle_accept_consent():
         cursor.close()
         conn.close()
 
+        print(f"Consent accepted successfully for session {session_id}")
         return jsonify({"success": True, "message": "Consent accepted"}), 200
 
     except Exception as e:
         logging.error(f"Error accepting consent: {e}")
+        print(f"Error accepting consent: {e}")
         return jsonify({"success": False, "error": "Server error"}), 500
 
 
 def handle_withdraw_consent():
     try:
-        data = request.get_json()
-        session_id = data.get('session_id')
+        # Handle both JSON and form data from WordPress
+        if request.content_type and 'application/json' in request.content_type:
+            data = request.get_json()
+            session_id = data.get('session_id')
+        else:
+            # WordPress sends form data
+            session_id = request.form.get('session_id')
+
+        print(f"Withdraw consent for session: {session_id}")
 
         if not session_id:
             return jsonify({"success": False, "error": "No session ID provided"}), 400
@@ -87,6 +103,7 @@ def handle_withdraw_consent():
             cursor.close()
             conn.close()
 
+            print(f"Consent withdrawn successfully for session {session_id}")
             return jsonify({
                 "success": True,
                 "message": "Consent withdrawn and data deleted"
@@ -104,6 +121,7 @@ def handle_withdraw_consent():
             cursor.close()
             conn.close()
 
+            print(f"Consent withdrawal recorded for session {session_id}")
             return jsonify({
                 "success": True,
                 "message": "Consent withdrawal recorded"
@@ -111,11 +129,14 @@ def handle_withdraw_consent():
 
     except Exception as e:
         logging.error(f"Error withdrawing consent: {e}")
+        print(f"Error withdrawing consent: {e}")
         return jsonify({"success": False, "error": "Server error"}), 500
 
 
 def check_consent_status(session_id):
     try:
+        print(f"Checking consent status for session: {session_id}")
+
         if not session_id:
             return {"can_proceed": False, "reason": "No session ID"}
 
@@ -142,10 +163,13 @@ def check_consent_status(session_id):
             has_consent, is_withdrawn = result
             can_proceed = has_consent and not is_withdrawn
             reason = None if can_proceed else "Consent not given or withdrawn"
+            print(f"Consent status: can_proceed={can_proceed}, reason={reason}")
             return {"can_proceed": can_proceed, "reason": reason}
         else:
+            print("No consent record found")
             return {"can_proceed": False, "reason": "Consent not yet given"}
 
     except Exception as e:
         logging.error(f"Error checking consent: {e}")
+        print(f"Error checking consent: {e}")
         return {"can_proceed": False, "reason": "Server error"}
