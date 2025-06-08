@@ -42,6 +42,69 @@ CONTEXTUAL_CUES_KEYWORDS = [
     "what about", "tell me more", "can you elaborate", "and about", "so about", "then about"
 ]
 
+# Session-based message tracking for variety
+session_unknown_messages = {}
+
+# Pool of randomized unknown intent messages
+UNKNOWN_INTENT_MESSAGES = [
+    "I'm here to answer questions about Bravur and IT services. What would you like to know? 🤔",
+    "I specialize in Bravur topics and IT trends. How can I assist you with those? 💡",
+    "My expertise is in Bravur services and general IT matters. What can I help you explore? 🤔",
+    "I'm best at discussing Bravur and technology topics. What interests you most? 💻",
+    "Let’s keep it Bravur or IT trend-focused — what would you like to discuss? ⚡"
+]
+
+# Pool of joke endings for unknown queries
+UNKNOWN_JOKE_ENDINGS = [
+    " By the way, if you need human support, our team is available on WhatsApp at +31 6 12345678 or email support@bravur.com - they're way smarter than me! 😄",
+    " If you'd prefer chatting with a real human (who probably knows more than me), reach out to +31 6 12345678 or support@bravur.com! 😊",
+    " For anything beyond my expertise, our human support team at +31 6 12345678 or support@bravur.com can help. 🌟",
+    " If I'm not hitting the mark, our fantastic human team at +31 6 12345678 or support@bravur.com is ready to save the day! 🦸‍♂️",
+    " And if it's something I can't answer, our brilliant team at +31 6 12345678 or support@bravur.com has all the deep Bravur knowledge you need. 🧠"
+]
+
+
+# Session ID suffix for human support jokes
+def get_session_id_suffix(session_id: str) -> str:
+    """Generate session ID mention for human support contact"""
+    if session_id and session_id != "default":
+        return f" Please mention your session ID: {session_id} when contacting them."
+    return ""
+
+
+def get_random_unknown_message(session_id: str) -> str:
+    """
+    Get a randomized unknown intent message, ensuring variety within each session.
+    Won't repeat messages until all have been used in the session.
+    """
+    if session_id not in session_unknown_messages:
+        session_unknown_messages[session_id] = {
+            'unused_messages': UNKNOWN_INTENT_MESSAGES.copy(),
+            'unused_jokes': UNKNOWN_JOKE_ENDINGS.copy()
+        }
+
+    session_data = session_unknown_messages[session_id]
+
+    # If we've used all messages, reset the pool
+    if not session_data['unused_messages']:
+        session_data['unused_messages'] = UNKNOWN_INTENT_MESSAGES.copy()
+
+    if not session_data['unused_jokes']:
+        session_data['unused_jokes'] = UNKNOWN_JOKE_ENDINGS.copy()
+
+    # Randomly select from unused messages and jokes
+    selected_message = random.choice(session_data['unused_messages'])
+    selected_joke = random.choice(session_data['unused_jokes'])
+
+    # Remove selected items from unused pools
+    session_data['unused_messages'].remove(selected_message)
+    session_data['unused_jokes'].remove(selected_joke)
+
+    # Add session ID suffix if session exists
+    session_suffix = get_session_id_suffix(session_id)
+
+    return selected_message + selected_joke + session_suffix
+
 
 def log_async(fn, *args):
     threading.Thread(target=fn, args=args).start()
@@ -109,7 +172,7 @@ def has_strong_contextual_cues(user_input: str) -> bool:
     words = text_lower.split()
     if len(words) <= 3 and any(
             pronoun in words for pronoun in ["that", "it", "this", "those", "them"]) and not text_lower.startswith(
-            ("what is", "what are")):
+        ("what is", "what are")):
         logging.debug(f"Strong Contextual Cue: Short query with pronoun in '{user_input}'")
         return True
     logging.debug(f"No strong contextual cues detected in '{user_input}' by has_strong_contextual_cues")
@@ -185,13 +248,13 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
             if len(user_qs) > 1: return {"type": "direct_answer",
                                          "content": f"Your last question was: \"{user_qs[-2]}\""}  # Using your logic
             return {"type": "direct_answer",
-                    "content": "Hmm, I couldn’t find your previous question."}  # develop's friendly tone
+                    "content": "Hmm, I couldn't find your previous question."}  # develop's friendly tone
         # Last Answer
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["your last answer", "what you said before"]):
             for msg in reversed(recent_convo):
                 if msg['role'] == 'assistant': return {"type": "direct_answer",
                                                        "content": f"My last reply was: \"{msg['content']}\""}  # develop's tone
-            return {"type": "direct_answer", "content": "I couldn’t recall what I said last time."}  # develop's tone
+            return {"type": "direct_answer", "content": "I couldn't recall what I said last time."}  # develop's tone
         # Summarize
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["summarize our talk", "recap this"]):
             summary_prompt_messages = [{"role": "system",
@@ -204,8 +267,9 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                 # Potentially use clean_and_clip_reply here from develop
                 return {"type": "direct_answer", "content": f"Here's a friendly summary of our chat: 😊\n{summary}"}
             except Exception as e:
-                logging.error(f"Summarization error: {e}"); return {"type": "refined_intent", "intent": "Unknown",
-                                                                    "query": user_input}
+                logging.error(f"Summarization error: {e}");
+                return {"type": "refined_intent", "intent": "Unknown",
+                        "query": user_input}
         logging.info(f"Memory prompt '{user_input}' not directly handled by simple checks, attempting LLM refinement.")
 
     # LLM for general contextual refinement (your prompt for this was good)
@@ -328,8 +392,9 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
 
     if detected_intent == "Unknown":
         logging.info(f"Handling as: Unknown (Final)")
-        # Using develop's friendly unknown
-        yield f"I'm here to answer questions about Bravur and IT services. What would you like to know? 🤔";
+        # Using randomized unknown messages with jokes
+        random_message = get_random_unknown_message(session_id or "default")
+        yield random_message
         return
 
     recent_convo_for_response = get_recent_conversation(session_id)
@@ -356,9 +421,10 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
                                                          max_tokens=300, temperature=0.6, stream=True)
             for chunk in stream:
                 if chunk.choices[0].delta.content: final_response_chunks.append(chunk.choices[0].delta.content); yield \
-                chunk.choices[0].delta.content
+                    chunk.choices[0].delta.content
         except Exception as e:
-            logging.error(f"LLM Error (IT Trends): {e}"); yield "[Error generating IT trends response]"
+            logging.error(f"LLM Error (IT Trends): {e}");
+            yield "[Error generating IT trends response]"
 
     elif detected_intent == "Company Info":  # Also catches refined "Previous Conversation Query" that became Company Info
         logging.info(f"Handling as: RAG Path for Intent='{detected_intent}'")
@@ -398,9 +464,10 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
                                                            temperature=0.5, stream=True)
             for chunk in stream:
                 if chunk.choices[0].delta.content: final_response_chunks.append(chunk.choices[0].delta.content); yield \
-                chunk.choices[0].delta.content
+                    chunk.choices[0].delta.content
         except Exception as e:
-            logging.error(f"LLM Error (RAG): {e}"); yield "[Error generating RAG response]"
+            logging.error(f"LLM Error (RAG): {e}");
+            yield "[Error generating RAG response]"
     else:  # Fallback if intent is somehow not covered
         logging.warning(f"Fell through main intent handling for '{detected_intent}'. Query: '{user_input}'")
         yield f"I'm a bit unsure how to help with that. I can discuss Bravur or general IT topics in {language_name}.";
@@ -419,6 +486,6 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     return
 
 
-agent_connector = AgentConnector() # Ensure this is defined/imported correctly
+agent_connector = AgentConnector()  # Ensure this is defined/imported correctly
 agent_connector.register_agent("Bravur_Information_Agent", company_info_handler_streaming)
 # The gpt_cached_response from your old code is not used in this streaming setup
