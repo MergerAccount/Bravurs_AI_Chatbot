@@ -2,6 +2,7 @@ from flask import request, jsonify, Response, stream_with_context
 import logging
 from app.chatbot import company_info_handler_streaming
 from app.database import create_chat_session, store_message
+from app.database import is_session_active
 
 
 def handle_chat():
@@ -70,7 +71,6 @@ def handle_chat():
             else:
                 return jsonify({"response": error_msg, "session_id": None})
 
-    # Convert session_id to integer
     try:
         session_id = int(session_id)
     except (ValueError, TypeError):
@@ -81,6 +81,30 @@ def handle_chat():
                 return jsonify({"error": error_msg}), 500
             else:
                 return jsonify({"response": error_msg, "session_id": None})
+
+        if not is_session_active(session_id):
+            error_msg = "This session is no longer active. Please start a new conversation."
+            logging.warning(f"Attempted to use inactive session: {session_id}")
+
+            if request_type in ["wordpress", "json"]:
+                return jsonify({
+                    "error": error_msg,
+                    "session_expired": True,
+                    "new_session_required": True
+                }), 403  # 403 Forbidden for security violation
+            else:
+                return jsonify({
+                    "response": error_msg,
+                    "session_id": None,
+                    "session_expired": True
+                })
+
+        store_message(session_id, user_input, "user")
+
+        if request_type in ["wordpress", "json"]:
+            return handle_wordpress_chat(user_input, session_id, language)
+
+        return handle_streaming_chat(user_input, session_id, language)
 
 
     # Store user message before processing
