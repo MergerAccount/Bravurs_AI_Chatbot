@@ -2,12 +2,17 @@ from flask import request, jsonify
 import logging
 from app.database import get_db_connection
 
-# Fetches all message history for a session
 def handle_history_fetch():
     session_id = request.args.get("session_id")
 
-    # No session provided
-    if not session_id:
+    # Check for missing, None, or "None" session
+    if not session_id or session_id == "None" or session_id == "null":
+        return jsonify({"messages": []})
+
+    # Try to convert to integer
+    try:
+        session_id = int(session_id)
+    except (ValueError, TypeError):
         return jsonify({"messages": []})
 
     conn = get_db_connection()
