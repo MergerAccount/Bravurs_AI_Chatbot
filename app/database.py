@@ -387,5 +387,45 @@ def check_actual_schema():
         print(f"❌ Database connection failed: {e}")
 
 
+def is_session_active(session_id):
+    """
+    Check if a session exists and is active
+    Returns: True if active, False if inactive/doesn't exist
+    """
+    conn = get_db_connection()
+    if conn is None:
+        logging.error("Failed to get DB connection in is_session_active")
+        return False
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT is_active FROM chat_session WHERE session_id = %s",
+            (session_id,)
+        )
+
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if result is None:
+            # Session doesn't exist
+            logging.warning(f"Session {session_id} does not exist")
+            return False
+
+        is_active = result[0]
+        if not is_active:
+            logging.warning(f"Session {session_id} is inactive")
+
+        return is_active
+
+    except Exception as e:
+        logging.error(f"Error checking session activity: {e}")
+        if conn:
+            conn.close()
+        return False
+
 if __name__ == "__main__":
     check_actual_schema()
+
