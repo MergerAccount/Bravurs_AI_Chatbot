@@ -25,13 +25,36 @@ def submit_feedback():
 def get_history():
     return handle_history_fetch()
 
+
 @routes.route("/session/create", methods=["POST"])
 def create_session():
     """Create a new chat session for WordPress frontend"""
-    session_id = create_chat_session()
-    if session_id:
-        return jsonify({"session_id": session_id})
-    return jsonify({"error": "Failed to create session"}), 500
+    try:
+        session_id = create_chat_session()
+
+        if session_id:
+            response_data = {
+                "success": True,
+                "session_id": session_id,
+                "message": "Session created successfully"
+            }
+            print(f"DEBUG: Returning response: {response_data}")
+            return jsonify(response_data), 200
+        else:
+            print("DEBUG: Failed to create session")
+            return jsonify({
+                "success": False,
+                "error": "Failed to create session"
+            }), 500
+
+    except Exception as e:
+        print(f"DEBUG: Exception in session creation: {e}")
+        import logging
+        logging.error(f"Error in session creation endpoint: {e}")
+        return jsonify({
+            "success": False,
+            "error": "Internal server error"
+        }), 500
 
 # === CONSENT ROUTES ===
 @routes.route('/consent/accept', methods=['POST'])

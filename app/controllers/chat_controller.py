@@ -61,7 +61,7 @@ def handle_chat():
             return jsonify({"response": error_response, "session_id": None})
 
     # Create session if none provided
-    if session_id == "None" or not session_id:
+    if session_id == "None" or not session_id or session_id == "null":
         session_id = create_chat_session()
         if not session_id:
             error_msg = "Sorry, I'm having trouble with your session. Please try again."
