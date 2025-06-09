@@ -252,11 +252,17 @@ def update_pending_embeddings():
 
             full_text = f"{title.strip() if title else ''}\n{content.strip()}"
 
+            if len(embedding) != 3072:
+                logging.error(f"Embedding size mismatch: got {len(embedding)}")
+                continue
+
             try:
                 response = client.embeddings.create(
                     input=full_text,
                     model="text-embedding-3-large"
                 )
+                print(f"Returned vector size: {len(response.data[0].embedding)}")
+
                 embedding = response.data[0].embedding
 
                 cursor.execute("""
