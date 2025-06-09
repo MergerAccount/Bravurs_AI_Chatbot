@@ -1,5 +1,6 @@
 import os
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from app.routes import routes, frontend
 import app.logging_config
 from app.rate_limiter import check_ip_rate_limit
@@ -27,6 +28,16 @@ def create_app():
             allowed_ip, ip_retry_after = check_ip_rate_limit(user_ip)
             if not allowed_ip:
                 return jsonify({"error": f"Too many requests from your IP address. Please try again in {ip_retry_after} seconds."}), 429, {'Retry-After': str(ip_retry_after)}
+
+
+    # Enable CORS for WordPress integration
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": "*",  # In production, specify your WordPress domain
+            "methods": ["GET", "POST", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization"]
+        }
+    })
 
     app.register_blueprint(routes)
     app.register_blueprint(frontend)
