@@ -7,6 +7,7 @@ import random  # From develop
 import textwrap  # From develop
 from functools import lru_cache
 from hashlib import sha256
+from app.database import is_session_expired
 
 from groq import Groq
 from openai import OpenAI
@@ -352,6 +353,10 @@ def clean_and_clip_reply(reply, max_sentences=3, max_chars=300):  # Increased li
 
 # === MAIN STREAMING HANDLER: Your structure, with develop's tone/formatting integrated ===
 def company_info_handler_streaming(user_input: str, session_id: str = None, language: str = "en-US"):
+    if session_id and is_session_expired(session_id):
+        yield "⏳ Your session has expired after 3 days. Please start a new session to continue chatting with me. 😊"
+        return
+
     language_name = "Dutch" if language == "nl-NL" else "English"
     logging.info(f"--- START HANDLER: Query='{user_input}', Session={session_id}, Lang={language} ---")
 
