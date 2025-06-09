@@ -11,7 +11,7 @@ from hashlib import sha256
 from groq import Groq
 from openai import OpenAI
 from fuzzywuzzy import fuzz
-
+from flask import session
 from app.agentConnector import AgentConnector
 
 from app.config import OPENAI_API_KEY, GROQ_API_KEY
@@ -183,9 +183,22 @@ def has_strong_contextual_cues(user_input: str) -> bool:
 def initial_classify_intent(user_input: str, language: str = "en-US") -> str:
     # ... (Your existing initial_classify_intent using Groq Llama3 8B or 70B, with refined prompt) ...
     # Make sure to use your latest refined prompt for this.
+    if is_gratitude_expression(user_input):
+        logging.info(f"Fast classification: Gratitude detected in '{user_input}'")
+        return "Gratitude"
+
+    mood = detect_mood(user_input)
+    if mood == "happy" and len(user_input.split()) <= 4:
+        logging.info(f"Fast classification: Positive Acknowledgment detected in '{user_input}'")
+        return "Positive Acknowledgment"
+
+    if mood == "angry" and len(user_input.split()) <= 10:
+        logging.info(f"Fast classification: Frustration detected in '{user_input}'")
+        return "Frustration"
+
     language_name = "Dutch" if language == "nl-NL" else "English"
     intent_categories_initial = ["Human Support Service Request", "IT Trends", "Company Info",
-                                 "Previous Conversation Query", "Unknown"]
+                                 "Previous Conversation Query", "Unknown", "Positive Acknowledgment", "Frustration"]
     prompt_content = f"""
 You are an extremely fast and efficient intent classifier for an AI support chatbot for "Bravur", an IT consultancy.
 The chatbot's purpose is to assist users in {language_name} with questions about "Bravur", general "IT Trends",
@@ -206,6 +219,11 @@ User Query: "Tell me more about that." -> Classified Intent: Previous Conversati
 User Query: "What was my last question?" -> Classified Intent: Previous Conversation Query
 User Query: "Hi there!" -> Classified Intent: Unknown
 User Query: "What is the capital of Australia?" -> Classified Intent: Unknown
+User Query: "Thanks!" -> Classified Intent: Gratitude
+User Query: "Thank you for your support." -> Classified Intent: Gratitude
+User Query: "Much appreciated." -> Classified Intent: Gratitude
+User Query: "Is there a thank-you note template?" -> Classified Intent: Unknown
+
 ---
 User Query (in {language_name}): "{user_input}"
 
@@ -315,13 +333,37 @@ Refined Intent:"""
 
 # --- Helper functions from 'develop' for tone/formatting ---
 def detect_mood(user_input: str) -> str:
-    angry_keywords = ["stupid", "hate", "idiot", "angry", "mad", "annoyed", "wtf", "useless", "terrible", "awful"]
+    angry_keywords = ["stupid", "hate", "idiot", "angry", "mad", "annoyed", "wtf", "useless", "terrible", "awful", "disappointed"]
     happy_keywords = ["love", "great", "awesome", "thanks", "cool", "nice", "amazing", "perfect", "excellent"]
     input_lower = user_input.lower()
     if any(word in input_lower for word in angry_keywords): return "angry"
     if any(word in input_lower for word in happy_keywords): return "happy"
     return "neutral"
 
+def is_gratitude_expression(user_input: str) -> bool:
+    text = user_input.lower().strip()
+
+    # Block if it's clearly a question about gratitude
+    if text.endswith("?") or any(
+            phrase in text for phrase in [
+                "how to say", "considered too casual", "thank you note",
+                "thank-you email", "example of", "is thank", "best way to say"
+            ]
+    ):
+        return False
+
+    # Fuzzy match common gratitude intent templates
+    gratitude_examples = [
+        "thank you", "thanks", "thanks a lot", "much appreciated",
+        "i appreciate it", "really appreciate your help",
+        "i'm grateful", "thank u"
+    ]
+
+    for example in gratitude_examples:
+        if fuzz.partial_ratio(text, example) > 85:
+            return True
+
+    return False
 
 def clean_and_clip_reply(reply, max_sentences=3, max_chars=300):  # Increased limits slightly
     # Remove duplicate consecutive phrases/lines robustly
@@ -387,6 +429,75 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         else:
             logging.info(f"Contextual cues, but no history. Treating as Unknown.")
             detected_intent = "Unknown"
+    # Runtime memory of past gratitude replies
+    recent_gratitude_replies = []
+
+    if detected_intent == "Gratitude":
+        logging.info("Handling as: Gratitude")
+
+        gratitude_prompt = [
+            {"role": "system", "content": (
+                "You are a friendly and expressive AI assistant. A user has just said thank you.\n\n"
+                "Reply warmly and naturally in 1–2 sentences. Do NOT repeat the same reply every time.\n"
+                "Use different expressions like:\n"
+                "- Absolutely! Let me know if I can help with anything else.\n"
+                "- Anytime! 😊\n"
+                "- You got it. I'm here for more questions if you have any.\n"
+                "- Happy to help! Feel free to ask more.\n"
+                "- Always a pleasure. Got more questions?\n\n"
+                "Vary your language and tone to feel human, not robotic. Avoid repeating the same response in this conversation."
+            )},
+            {"role": "user", "content": user_input}
+        ]
+
+        try:
+            reply = None
+            MAX_TRIES = 6
+
+            for _ in range(MAX_TRIES):
+                completion = groq_client.chat.completions.create(
+                    messages=gratitude_prompt,
+                    model="llama-3.3-70b-versatile",
+                    temperature=random.uniform(0.85, 1.0),
+                    max_tokens=60
+                )
+                candidate = completion.choices[0].message.content.strip()
+
+                if candidate not in recent_gratitude_replies:
+                    reply = candidate
+                    recent_gratitude_replies.append(reply)
+                    if len(recent_gratitude_replies) > 20:
+                        recent_gratitude_replies.pop(0)
+                    break
+
+            if not reply:
+                fallback_responses = [
+                    "Sure thing! Let me know if I can help with anything else. 😊",
+                    "You're welcome! Always here to help.",
+                    "Anytime! I'm here if more questions come up."
+                ]
+                reply = random.choice(fallback_responses)
+
+            yield reply
+            return
+
+        except Exception as e:
+            logging.error(f"LLM Gratitude Generation Error: {e}")
+            yield "You're welcome! 😊 Let me know if I can assist you with anything else."
+            return
+
+    if detected_intent == "Positive Acknowledgment":
+        logging.info("Handling as: Positive Acknowledgment")
+        reply = "Glad you liked that! 😊 Let me know if you have more questions."
+        yield reply
+        return
+
+    if detected_intent == "Frustration":
+        logging.info("Handling as: Frustration")
+        reply = ("I'm sorry that wasn't helpful. 😔 I'm here to assist you — could you tell me more "
+                 "so I can improve the answer or connect you with support?")
+        yield reply
+        return
 
     logging.info(f"Proceeding with final intent: '{detected_intent}' for query: '{user_input}'")
 
@@ -484,7 +595,6 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         # For now, let's assume the LLM respects the brevity prompt.
         logging.info(f"Final assembled response before potential clipping: '{full_bot_reply[:300]}...'")
     return
-
 
 agent_connector = AgentConnector()  # Ensure this is defined/imported correctly
 agent_connector.register_agent("Bravur_Information_Agent", company_info_handler_streaming)
