@@ -3,23 +3,22 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 from app.database import create_chat_session, is_session_expired
 from app.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+from app.database import is_session_active, get_db_connection;
 
 def manually_set_session_timestamp(session_id, fake_time):
-    conn = psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE chat_session SET timestamp = %s WHERE session_id = %s",
-        (fake_time, session_id)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
+    conn = get_db_connection()
+    if conn is None:
+        raise Exception("DB connection failed")
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE chat_session SET timestamp = %s WHERE session_id = %s",
+            (fake_time, session_id)
+        )
+        conn.commit()
+        cursor.close()
+    finally:
+        conn.close()
 
 def test_session_expired_after_3_days():
     # Create a new session
@@ -32,6 +31,7 @@ def test_session_expired_after_3_days():
 
     # Assert it is expired
     assert is_session_expired(session_id) == True
+    assert is_session_active(session_id) is False  # optionally mark session inactive elsewhere
 
 def test_session_not_expired_within_3_days():
     session_id = create_chat_session()
@@ -41,6 +41,8 @@ def test_session_not_expired_within_3_days():
     manually_set_session_timestamp(session_id, recent_time)
 
     assert is_session_expired(session_id) == False
+    assert is_session_active(session_id) is True  # still active
 
 def test_session_expired_invalid_id():
     assert is_session_expired("invalid_id") == True
+    assert is_session_active("invalid_id") is False

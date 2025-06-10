@@ -430,14 +430,12 @@ def is_session_expired(session_id, expiration_hours=72):
     """
     Returns True if the session is older than `expiration_hours` or doesn't exist.
     """
+    conn = get_db_connection()
+    if conn is None:
+        logging.error("Failed to get DB connection in is_session_expired")
+        return True
+
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
         cursor = conn.cursor()
         cursor.execute("SELECT timestamp FROM chat_session WHERE session_id = %s", (session_id,))
         row = cursor.fetchone()
