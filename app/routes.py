@@ -14,7 +14,12 @@ routes = Blueprint("routes", __name__, url_prefix="/api/v1")
 
 @routes.route("/chat", methods=["POST"])
 def chat():
-    """Modified to handle WordPress requests with session_id and language"""
+    """Modified to handle WordPress requests"""
+
+    user_input = request.json.get("input", "")
+    if len(user_input) >= 1000 or len(user_input.split()) >= 150:
+        return jsonify({"error": "Input too long. Max 150 words or 1000 characters."}), 400
+
     return handle_chat()
 
 @routes.route("/feedback", methods=["POST"])
