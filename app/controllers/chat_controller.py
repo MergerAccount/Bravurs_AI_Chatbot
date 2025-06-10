@@ -11,11 +11,6 @@ def handle_chat():
     and WordPress (form data via AJAX proxy)
     """
 
-    # Debug logging
-    print(f"=== CHAT REQUEST DEBUG ===")
-    print(f"Content-Type: {request.content_type}")
-    print(f"Method: {request.method}")
-    print(f"Form data: {dict(request.form)}")
     try:
         print(f"JSON data: {request.get_json(silent=True)}")
     except Exception as e:
@@ -48,11 +43,6 @@ def handle_chat():
             request_type = "wordpress"
         else:
             request_type = "form"
-
-    print(f"Detected request type: {request_type}")
-    print(f"User input: {user_input}")
-    print(f"Session ID: {session_id}")
-    print(f"Language: {language}")
 
     if not user_input:
         error_response = "Message is required" if request_type == "wordpress" else "User input is required"
