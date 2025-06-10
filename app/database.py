@@ -458,6 +458,11 @@ def is_session_expired(session_id, expiration_hours=72):
         print(f"Error checking session expiration: {e}")
         return True
 
+def is_session_valid(session_id):
+    if is_session_expired(session_id):
+        return False
+    return is_session_active(session_id)
+
 if __name__ == "__main__":
     check_actual_schema()
 
