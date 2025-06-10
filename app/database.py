@@ -1,6 +1,6 @@
 import psycopg2
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from app.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, OPENAI_API_KEY
 from openai import OpenAI
 
@@ -425,6 +425,43 @@ def is_session_active(session_id):
         if conn:
             conn.close()
         return False
+
+def is_session_expired(session_id, expiration_hours=72):
+    """
+    Returns True if the session is older than `expiration_hours` or doesn't exist.
+    """
+    conn = get_db_connection()
+    if conn is None:
+        logging.error("Failed to get DB connection in is_session_expired")
+        return True
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT timestamp FROM chat_session WHERE session_id = %s", (session_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if row is None:
+            return True
+
+        session_time = row[0]
+
+        # ✅ Make it timezone-aware if it isn't already
+        if session_time.tzinfo is None:
+            session_time = session_time.replace(tzinfo=timezone.utc)
+
+        expiration_time = session_time + timedelta(days=3)
+        return datetime.now(timezone.utc) > expiration_time
+
+    except Exception as e:
+        print(f"Error checking session expiration: {e}")
+        return True
+
+def is_session_valid(session_id):
+    if is_session_expired(session_id):
+        return False
+    return is_session_active(session_id)
 
 if __name__ == "__main__":
     check_actual_schema()
