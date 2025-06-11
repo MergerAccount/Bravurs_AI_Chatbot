@@ -78,7 +78,7 @@ def create_chat_session():
         print(f"DEBUG: Successfully created session_id: {session_id}")
         logging.info(f"Created new chat session: {session_id}")
 
-        # Initialize Redis limit (if not already set)
+        # Initialize Redis limit
         from app.rate_limiter import r, SESSION_MAX_REQUESTS
         meta_key = f"rate_limit:meta:{session_id}"
         if not r.hexists(meta_key, "limit"):
