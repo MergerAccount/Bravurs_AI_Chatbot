@@ -28,7 +28,6 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 # Initialize Groq client (for fast intent classification & potentially IT Trends responses)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# embedding_cache = {} # Not actively used in the current flow, can be removed if so
 
 # --- Constants & Helpers ---
 MEMORY_PROMPTS_KEYWORDS = [
@@ -119,7 +118,7 @@ def estimate_tokens(text):
     return max(1, int(len(text.split()) * 0.75))
 
 
-# --- get_recent_conversation: Taken from 'develop' branch (includes latest_language_message logic) ---
+# --- get_recent_conversation: (includes latest_language_message logic) ---
 def get_recent_conversation(session_id, max_tokens=400):
     latest_language_message = None  # From develop
     if not session_id: return []
@@ -147,20 +146,15 @@ def get_recent_conversation(session_id, max_tokens=400):
 
     # Inject language message if it exists and isn't already the first system message
     if latest_language_message:
-        # Remove any existing instances first to avoid duplication if it was already in selected
         selected = [msg for msg in selected if latest_language_message["content"] not in msg.get("content", "")]
-        # Check if the first message is already a system message (e.g. main system prompt)
-        # If so, insert after it. Otherwise, insert at the beginning.
-        # For now, simple prepend for history, main system prompt is added separately.
         selected.insert(0, latest_language_message)
 
     logging.debug(f"get_recent_conversation (session {session_id}, {len(selected)} msgs, ~{total_tokens} tokens)")
     return selected
 
 
-# --- has_strong_contextual_cues: From your feature branch ---
+# --- has_strong_contextual_cues ---
 def has_strong_contextual_cues(user_input: str) -> bool:
-    # ... (Your existing refined logic for this function) ...
     text_lower = user_input.lower()
     if any(fuzz.partial_ratio(text_lower, prompt) > 85 for prompt in MEMORY_PROMPTS_KEYWORDS):
         logging.debug(f"Strong Contextual Cue: Matched explicit memory prompt in '{user_input}'")
@@ -180,10 +174,8 @@ def has_strong_contextual_cues(user_input: str) -> bool:
     return False
 
 
-# --- STAGE 1: INITIAL STATELESS INTENT CLASSIFIER: From your feature branch (using Groq) ---
+# --- STAGE 1: INITIAL STATELESS INTENT CLASSIFIER (using Groq) ---
 def initial_classify_intent(user_input: str, language: str = "en-US") -> str:
-    # ... (Your existing initial_classify_intent using Groq Llama3 8B or 70B, with refined prompt) ...
-    # Make sure to use your latest refined prompt for this.
     if is_gratitude_expression(user_input):
         logging.info(f"Fast classification: Gratitude detected in '{user_input}'")
         return "Gratitude"
@@ -229,10 +221,10 @@ User Query: "Is there a thank-you note template?" -> Classified Intent: Unknown
 User Query (in {language_name}): "{user_input}"
 
 Strictly respond with ONLY one category name from the list above.
-Classified Intent:"""  # Using llama-3.3-70b-versatile as per your last version
+Classified Intent:"""
     try:
-        classification_model = "llama-3.3-70b-versatile"  # Or llama3-8b-8192 if preferred for speed
-        # ... (rest of your initial_classify_intent implementation) ...
+        classification_model = "llama-3.3-70b-versatile"
+
         logging.info(f"INITIAL CLASSIFICATION for: '{user_input}' using model {classification_model}")
         chat_completion = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt_content}],
@@ -250,10 +242,9 @@ Classified Intent:"""  # Using llama-3.3-70b-versatile as per your last version
         return "Unknown"
 
 
-# --- STAGE 2: CONTEXTUAL RESOLUTION / META QUESTION HANDLER: From your feature branch, with develop's friendly responses ---
+# --- STAGE 2: CONTEXTUAL RESOLUTION / META QUESTION HANDLER:
 def resolve_contextual_query(user_input: str, recent_convo: list, session_id: str, language: str = "en-US"):
-    # ... (Your existing resolve_contextual_query using Groq Llama3 8B or 70B) ...
-    # MODIFICATION: Use friendlier canned responses from 'develop' if direct_answer
+
     language_name = "Dutch" if language == "nl-NL" else "English"
     lower_user_input = user_input.lower()
 
@@ -265,15 +256,15 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                 "tell me my last question"]):
             user_qs = [m['content'] for m in recent_convo if m['role'] == 'user']
             if len(user_qs) > 1: return {"type": "direct_answer",
-                                         "content": f"Your last question was: \"{user_qs[-2]}\""}  # Using your logic
+                                         "content": f"Your last question was: \"{user_qs[-2]}\""}
             return {"type": "direct_answer",
-                    "content": "Hmm, I couldn't find your previous question."}  # develop's friendly tone
+                    "content": "Hmm, I couldn't find your previous question."}
         # Last Answer
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["your last answer", "what you said before"]):
             for msg in reversed(recent_convo):
                 if msg['role'] == 'assistant': return {"type": "direct_answer",
-                                                       "content": f"My last reply was: \"{msg['content']}\""}  # develop's tone
-            return {"type": "direct_answer", "content": "I couldn't recall what I said last time."}  # develop's tone
+                                                       "content": f"My last reply was: \"{msg['content']}\""}
+            return {"type": "direct_answer", "content": "I couldn't recall what I said last time."}
         # Summarize
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["summarize our talk", "recap this"]):
             summary_prompt_messages = [{"role": "system",
@@ -283,7 +274,6 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                                                                  model="llama-3.3-70b-versatile", temperature=0.5,
                                                                  max_tokens=200)
                 summary = completion.choices[0].message.content.strip()
-                # Potentially use clean_and_clip_reply here from develop
                 return {"type": "direct_answer", "content": f"Here's a friendly summary of our chat: 😊\n{summary}"}
             except Exception as e:
                 logging.error(f"Summarization error: {e}");
@@ -291,10 +281,10 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                         "query": user_input}
         logging.info(f"Memory prompt '{user_input}' not directly handled by simple checks, attempting LLM refinement.")
 
-    # LLM for general contextual refinement (your prompt for this was good)
+    # LLM for general contextual refinement
     intent_categories_refined = ["Company Info", "IT Trends", "Human Support Service Request", "Unknown"]
     history_str_parts = [f"{msg['role']}: {msg['content']}" for msg in
-                         recent_convo]  # ... (your existing refinement_prompt)
+                         recent_convo]
     formatted_history = "\n".join(history_str_parts) if history_str_parts else "No conversation history available."
     refinement_prompt = f"""
 You are an AI assistant analyzing a user's query in the context of an ongoing conversation with a support chatbot for "Bravur" (an IT consultancy).
@@ -314,7 +304,6 @@ Your Task: Based on the Conversation History and the User's Current Query, decid
 Strictly respond with ONLY one category name: Company Info, IT Trends, Human Support Service Request, Unknown.
 Refined Intent:"""
     try:
-        # ... (your existing LLM call for refinement using groq_client and llama-3.3-70b-versatile) ...
         model = "llama-3.3-70b-versatile"
         logging.info(f"CONTEXTUAL REFINEMENT (LLM Pass) for: '{user_input}' using model {model}")
         completion = groq_client.chat.completions.create(
@@ -332,7 +321,7 @@ Refined Intent:"""
         return {"type": "refined_intent", "intent": "Unknown", "query": user_input}
 
 
-# --- Helper functions from 'develop' for tone/formatting ---
+# --- Helper functions for tone/formatting ---
 def detect_mood(user_input: str) -> str:
     angry_keywords = ["stupid", "hate", "idiot", "angry", "mad", "annoyed", "wtf", "useless", "terrible", "awful", "disappointed"]
     happy_keywords = ["love", "great", "awesome", "thanks", "cool", "nice", "amazing", "perfect", "excellent"]
@@ -527,7 +516,7 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     if detected_intent == "IT Trends":
         logging.info(f"Handling as: IT Trends (Final)")
         sys_prompt = (f"You are a knowledgeable AI assistant for Bravur. {tone_instruction}"
-                      f"Provide concise (max 2-3 short sentences) and clear insights on IT services and general technology trends. "
+                      f"Provide somewhat concise (max 4-5 sentences) and clear insights on IT services and general technology trends. "
                       f"Respond in {language_name}. Add one relevant emoji to make the reply engaging. 💡")
         messages = [{"role": "system", "content": sys_prompt}] + recent_convo_for_response + [
             {"role": "user", "content": user_input}]
@@ -556,17 +545,16 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         else:
             semantic_context_parts = []
             for item in search_results:
-                entry_id, title, content, _ = item  # Assuming (id, title, content, similarity)
+                entry_id, title, content, _ = item
                 title_str = f"Title: {title}\n" if title else ""
-                # Using a summary of content for the prompt as per develop's RAG approach, but keeping Row ID
-                summary_content = ' '.join(content.split()[:50]) + "..."  # Summary like develop
+                summary_content = ' '.join(content.split()[:50]) + "..."
                 semantic_context_parts.append(f"Row ID: {entry_id}\n{title_str}Summary: {summary_content}")
             semantic_context_str = "\n\n---\n\n".join(semantic_context_parts)
 
         rag_system_prompt = (
             f"You are a helpful and conversational AI assistant for Bravur, an IT consultancy. Respond in {language_name}. {tone_instruction}"
             f"Answer the user's query based on conversation history and the 'Provided Bravur Summaries' below. "
-            f"Your response should be friendly, clear, and NOT EXCEED 2-3 SHORT SENTENCES. "
+            f"Your response should be friendly, clear, and NOT EXCEED 4-5 SENTENCES. "
             f"If using information from the summaries, CITE THE 'Row ID' like (Row ID: X). "
             f"If the answer is not in the summaries or history, say you don't have that specific detail from Bravur's documentation. "
             f"Add one relevant emoji per answer to make it engaging. ✨\n\n"
@@ -592,15 +580,9 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     # After stream is complete for IT Trends or Company Info/RAG
     if final_response_chunks:
         full_bot_reply = "".join(final_response_chunks)
-        # Apply develop's clean_and_clip_reply to the *final assembled string* if needed,
-        # though the prompt already asks for brevity. Yielding already happened.
-        # This clipping here would only affect what's logged/stored, not what user saw.
-        # For UX, brevity should be in the prompt.
-        # For DB storage, maybe store the slightly longer version if clipping is aggressive.
-        # For now, let's assume the LLM respects the brevity prompt.
+
         logging.info(f"Final assembled response before potential clipping: '{full_bot_reply[:300]}...'")
     return
 
-agent_connector = AgentConnector()  # Ensure this is defined/imported correctly
+agent_connector = AgentConnector()
 agent_connector.register_agent("Bravur_Information_Agent", company_info_handler_streaming)
-# The gpt_cached_response from your old code is not used in this streaming setup
