@@ -60,3 +60,14 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+
+
+# Scripts and temp files
+app/chatbot_backup.py
+app/chatbot_simplified_rag_test.py
+groq_latency.py
+process_documents.py
+process_documents_demo.py
+
+# Sample docs
+sample_documents/

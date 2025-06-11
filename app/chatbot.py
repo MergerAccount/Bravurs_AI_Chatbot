@@ -7,11 +7,12 @@ import random  # From develop
 import textwrap  # From develop
 from functools import lru_cache
 from hashlib import sha256
+from app.database import is_session_expired
 
 from groq import Groq
 from openai import OpenAI
 from fuzzywuzzy import fuzz
-
+from flask import session
 from app.agentConnector import AgentConnector
 
 from app.config import OPENAI_API_KEY, GROQ_API_KEY
@@ -27,7 +28,6 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 # Initialize Groq client (for fast intent classification & potentially IT Trends responses)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# embedding_cache = {} # Not actively used in the current flow, can be removed if so
 
 # --- Constants & Helpers ---
 MEMORY_PROMPTS_KEYWORDS = [
@@ -42,6 +42,69 @@ CONTEXTUAL_CUES_KEYWORDS = [
     "what about", "tell me more", "can you elaborate", "and about", "so about", "then about"
 ]
 
+# Session-based message tracking for variety
+session_unknown_messages = {}
+
+# Pool of randomized unknown intent messages
+UNKNOWN_INTENT_MESSAGES = [
+    "I'm here to answer questions about Bravur and IT services. What would you like to know? 🤔",
+    "I specialize in Bravur topics and IT trends. How can I assist you with those? 💡",
+    "My expertise is in Bravur services and general IT matters. What can I help you explore? 🤔",
+    "I'm best at discussing Bravur and technology topics. What interests you most? 💻",
+    "Let’s keep it Bravur or IT trend-focused — what would you like to discuss? ⚡"
+]
+
+# Pool of joke endings for unknown queries
+UNKNOWN_JOKE_ENDINGS = [
+    " By the way, if you need human support, our team is available on WhatsApp at +31 6 12345678 or email support@bravur.com - they're way smarter than me! 😄",
+    " If you'd prefer chatting with a real human (who probably knows more than me), reach out to +31 6 12345678 or support@bravur.com! 😊",
+    " For anything beyond my expertise, our human support team at +31 6 12345678 or support@bravur.com can help. 🌟",
+    " If I'm not hitting the mark, our fantastic human team at +31 6 12345678 or support@bravur.com is ready to save the day! 🦸‍♂️",
+    " And if it's something I can't answer, our brilliant team at +31 6 12345678 or support@bravur.com has all the deep Bravur knowledge you need. 🧠"
+]
+
+
+# Session ID suffix for human support jokes
+def get_session_id_suffix(session_id: str) -> str:
+    """Generate session ID mention for human support contact"""
+    if session_id and session_id != "default":
+        return f" Please mention your session ID: {session_id} when contacting them."
+    return ""
+
+
+def get_random_unknown_message(session_id: str) -> str:
+    """
+    Get a randomized unknown intent message, ensuring variety within each session.
+    Won't repeat messages until all have been used in the session.
+    """
+    if session_id not in session_unknown_messages:
+        session_unknown_messages[session_id] = {
+            'unused_messages': UNKNOWN_INTENT_MESSAGES.copy(),
+            'unused_jokes': UNKNOWN_JOKE_ENDINGS.copy()
+        }
+
+    session_data = session_unknown_messages[session_id]
+
+    # If we've used all messages, reset the pool
+    if not session_data['unused_messages']:
+        session_data['unused_messages'] = UNKNOWN_INTENT_MESSAGES.copy()
+
+    if not session_data['unused_jokes']:
+        session_data['unused_jokes'] = UNKNOWN_JOKE_ENDINGS.copy()
+
+    # Randomly select from unused messages and jokes
+    selected_message = random.choice(session_data['unused_messages'])
+    selected_joke = random.choice(session_data['unused_jokes'])
+
+    # Remove selected items from unused pools
+    session_data['unused_messages'].remove(selected_message)
+    session_data['unused_jokes'].remove(selected_joke)
+
+    # Add session ID suffix if session exists
+    session_suffix = get_session_id_suffix(session_id)
+
+    return selected_message + selected_joke + session_suffix
+
 
 def log_async(fn, *args):
     threading.Thread(target=fn, args=args).start()
@@ -55,7 +118,7 @@ def estimate_tokens(text):
     return max(1, int(len(text.split()) * 0.75))
 
 
-# --- get_recent_conversation: Taken from 'develop' branch (includes latest_language_message logic) ---
+# --- get_recent_conversation: (includes latest_language_message logic) ---
 def get_recent_conversation(session_id, max_tokens=400):
     latest_language_message = None  # From develop
     if not session_id: return []
@@ -83,20 +146,15 @@ def get_recent_conversation(session_id, max_tokens=400):
 
     # Inject language message if it exists and isn't already the first system message
     if latest_language_message:
-        # Remove any existing instances first to avoid duplication if it was already in selected
         selected = [msg for msg in selected if latest_language_message["content"] not in msg.get("content", "")]
-        # Check if the first message is already a system message (e.g. main system prompt)
-        # If so, insert after it. Otherwise, insert at the beginning.
-        # For now, simple prepend for history, main system prompt is added separately.
         selected.insert(0, latest_language_message)
 
     logging.debug(f"get_recent_conversation (session {session_id}, {len(selected)} msgs, ~{total_tokens} tokens)")
     return selected
 
 
-# --- has_strong_contextual_cues: From your feature branch ---
+# --- has_strong_contextual_cues ---
 def has_strong_contextual_cues(user_input: str) -> bool:
-    # ... (Your existing refined logic for this function) ...
     text_lower = user_input.lower()
     if any(fuzz.partial_ratio(text_lower, prompt) > 85 for prompt in MEMORY_PROMPTS_KEYWORDS):
         logging.debug(f"Strong Contextual Cue: Matched explicit memory prompt in '{user_input}'")
@@ -109,20 +167,31 @@ def has_strong_contextual_cues(user_input: str) -> bool:
     words = text_lower.split()
     if len(words) <= 3 and any(
             pronoun in words for pronoun in ["that", "it", "this", "those", "them"]) and not text_lower.startswith(
-            ("what is", "what are")):
+        ("what is", "what are")):
         logging.debug(f"Strong Contextual Cue: Short query with pronoun in '{user_input}'")
         return True
     logging.debug(f"No strong contextual cues detected in '{user_input}' by has_strong_contextual_cues")
     return False
 
 
-# --- STAGE 1: INITIAL STATELESS INTENT CLASSIFIER: From your feature branch (using Groq) ---
+# --- STAGE 1: INITIAL STATELESS INTENT CLASSIFIER (using Groq) ---
 def initial_classify_intent(user_input: str, language: str = "en-US") -> str:
-    # ... (Your existing initial_classify_intent using Groq Llama3 8B or 70B, with refined prompt) ...
-    # Make sure to use your latest refined prompt for this.
+    if is_gratitude_expression(user_input):
+        logging.info(f"Fast classification: Gratitude detected in '{user_input}'")
+        return "Gratitude"
+
+    mood = detect_mood(user_input)
+    if mood == "happy" and len(user_input.split()) <= 4:
+        logging.info(f"Fast classification: Positive Acknowledgment detected in '{user_input}'")
+        return "Positive Acknowledgment"
+
+    if mood == "angry" and len(user_input.split()) <= 10:
+        logging.info(f"Fast classification: Frustration detected in '{user_input}'")
+        return "Frustration"
+
     language_name = "Dutch" if language == "nl-NL" else "English"
     intent_categories_initial = ["Human Support Service Request", "IT Trends", "Company Info",
-                                 "Previous Conversation Query", "Unknown"]
+                                 "Previous Conversation Query", "Unknown", "Positive Acknowledgment", "Frustration"]
     prompt_content = f"""
 You are an extremely fast and efficient intent classifier for an AI support chatbot for "Bravur", an IT consultancy.
 The chatbot's purpose is to assist users in {language_name} with questions about "Bravur", general "IT Trends",
@@ -143,14 +212,19 @@ User Query: "Tell me more about that." -> Classified Intent: Previous Conversati
 User Query: "What was my last question?" -> Classified Intent: Previous Conversation Query
 User Query: "Hi there!" -> Classified Intent: Unknown
 User Query: "What is the capital of Australia?" -> Classified Intent: Unknown
+User Query: "Thanks!" -> Classified Intent: Gratitude
+User Query: "Thank you for your support." -> Classified Intent: Gratitude
+User Query: "Much appreciated." -> Classified Intent: Gratitude
+User Query: "Is there a thank-you note template?" -> Classified Intent: Unknown
+
 ---
 User Query (in {language_name}): "{user_input}"
 
 Strictly respond with ONLY one category name from the list above.
-Classified Intent:"""  # Using llama-3.3-70b-versatile as per your last version
+Classified Intent:"""
     try:
-        classification_model = "llama-3.3-70b-versatile"  # Or llama3-8b-8192 if preferred for speed
-        # ... (rest of your initial_classify_intent implementation) ...
+        classification_model = "llama-3.3-70b-versatile"
+
         logging.info(f"INITIAL CLASSIFICATION for: '{user_input}' using model {classification_model}")
         chat_completion = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt_content}],
@@ -168,10 +242,9 @@ Classified Intent:"""  # Using llama-3.3-70b-versatile as per your last version
         return "Unknown"
 
 
-# --- STAGE 2: CONTEXTUAL RESOLUTION / META QUESTION HANDLER: From your feature branch, with develop's friendly responses ---
+# --- STAGE 2: CONTEXTUAL RESOLUTION / META QUESTION HANDLER:
 def resolve_contextual_query(user_input: str, recent_convo: list, session_id: str, language: str = "en-US"):
-    # ... (Your existing resolve_contextual_query using Groq Llama3 8B or 70B) ...
-    # MODIFICATION: Use friendlier canned responses from 'develop' if direct_answer
+
     language_name = "Dutch" if language == "nl-NL" else "English"
     lower_user_input = user_input.lower()
 
@@ -183,15 +256,15 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                 "tell me my last question"]):
             user_qs = [m['content'] for m in recent_convo if m['role'] == 'user']
             if len(user_qs) > 1: return {"type": "direct_answer",
-                                         "content": f"Your last question was: \"{user_qs[-2]}\""}  # Using your logic
+                                         "content": f"Your last question was: \"{user_qs[-2]}\""}
             return {"type": "direct_answer",
-                    "content": "Hmm, I couldn’t find your previous question."}  # develop's friendly tone
+                    "content": "Hmm, I couldn't find your previous question."}
         # Last Answer
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["your last answer", "what you said before"]):
             for msg in reversed(recent_convo):
                 if msg['role'] == 'assistant': return {"type": "direct_answer",
-                                                       "content": f"My last reply was: \"{msg['content']}\""}  # develop's tone
-            return {"type": "direct_answer", "content": "I couldn’t recall what I said last time."}  # develop's tone
+                                                       "content": f"My last reply was: \"{msg['content']}\""}
+            return {"type": "direct_answer", "content": "I couldn't recall what I said last time."}
         # Summarize
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["summarize our talk", "recap this"]):
             summary_prompt_messages = [{"role": "system",
@@ -201,17 +274,17 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                                                                  model="llama-3.3-70b-versatile", temperature=0.5,
                                                                  max_tokens=200)
                 summary = completion.choices[0].message.content.strip()
-                # Potentially use clean_and_clip_reply here from develop
                 return {"type": "direct_answer", "content": f"Here's a friendly summary of our chat: 😊\n{summary}"}
             except Exception as e:
-                logging.error(f"Summarization error: {e}"); return {"type": "refined_intent", "intent": "Unknown",
-                                                                    "query": user_input}
+                logging.error(f"Summarization error: {e}");
+                return {"type": "refined_intent", "intent": "Unknown",
+                        "query": user_input}
         logging.info(f"Memory prompt '{user_input}' not directly handled by simple checks, attempting LLM refinement.")
 
-    # LLM for general contextual refinement (your prompt for this was good)
+    # LLM for general contextual refinement
     intent_categories_refined = ["Company Info", "IT Trends", "Human Support Service Request", "Unknown"]
     history_str_parts = [f"{msg['role']}: {msg['content']}" for msg in
-                         recent_convo]  # ... (your existing refinement_prompt)
+                         recent_convo]
     formatted_history = "\n".join(history_str_parts) if history_str_parts else "No conversation history available."
     refinement_prompt = f"""
 You are an AI assistant analyzing a user's query in the context of an ongoing conversation with a support chatbot for "Bravur" (an IT consultancy).
@@ -231,7 +304,6 @@ Your Task: Based on the Conversation History and the User's Current Query, decid
 Strictly respond with ONLY one category name: Company Info, IT Trends, Human Support Service Request, Unknown.
 Refined Intent:"""
     try:
-        # ... (your existing LLM call for refinement using groq_client and llama-3.3-70b-versatile) ...
         model = "llama-3.3-70b-versatile"
         logging.info(f"CONTEXTUAL REFINEMENT (LLM Pass) for: '{user_input}' using model {model}")
         completion = groq_client.chat.completions.create(
@@ -249,15 +321,39 @@ Refined Intent:"""
         return {"type": "refined_intent", "intent": "Unknown", "query": user_input}
 
 
-# --- Helper functions from 'develop' for tone/formatting ---
+# --- Helper functions for tone/formatting ---
 def detect_mood(user_input: str) -> str:
-    angry_keywords = ["stupid", "hate", "idiot", "angry", "mad", "annoyed", "wtf", "useless", "terrible", "awful"]
+    angry_keywords = ["stupid", "hate", "idiot", "angry", "mad", "annoyed", "wtf", "useless", "terrible", "awful", "disappointed"]
     happy_keywords = ["love", "great", "awesome", "thanks", "cool", "nice", "amazing", "perfect", "excellent"]
     input_lower = user_input.lower()
     if any(word in input_lower for word in angry_keywords): return "angry"
     if any(word in input_lower for word in happy_keywords): return "happy"
     return "neutral"
 
+def is_gratitude_expression(user_input: str) -> bool:
+    text = user_input.lower().strip()
+
+    # Block if it's clearly a question about gratitude
+    if text.endswith("?") or any(
+            phrase in text for phrase in [
+                "how to say", "considered too casual", "thank you note",
+                "thank-you email", "example of", "is thank", "best way to say"
+            ]
+    ):
+        return False
+
+    # Fuzzy match common gratitude intent templates
+    gratitude_examples = [
+        "thank you", "thanks", "thanks a lot", "much appreciated",
+        "i appreciate it", "really appreciate your help",
+        "i'm grateful", "thank u"
+    ]
+
+    for example in gratitude_examples:
+        if fuzz.partial_ratio(text, example) > 85:
+            return True
+
+    return False
 
 def clean_and_clip_reply(reply, max_sentences=3, max_chars=300):  # Increased limits slightly
     # Remove duplicate consecutive phrases/lines robustly
@@ -288,6 +384,10 @@ def clean_and_clip_reply(reply, max_sentences=3, max_chars=300):  # Increased li
 
 # === MAIN STREAMING HANDLER: Your structure, with develop's tone/formatting integrated ===
 def company_info_handler_streaming(user_input: str, session_id: str = None, language: str = "en-US"):
+    if session_id and is_session_expired(session_id):
+        yield "⏳ Your session has expired after 3 days. Please start a new session to continue chatting with me. 😊"
+        return
+
     language_name = "Dutch" if language == "nl-NL" else "English"
     logging.info(f"--- START HANDLER: Query='{user_input}', Session={session_id}, Lang={language} ---")
 
@@ -323,13 +423,83 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         else:
             logging.info(f"Contextual cues, but no history. Treating as Unknown.")
             detected_intent = "Unknown"
+    # Runtime memory of past gratitude replies
+    recent_gratitude_replies = []
+
+    if detected_intent == "Gratitude":
+        logging.info("Handling as: Gratitude")
+
+        gratitude_prompt = [
+            {"role": "system", "content": (
+                "You are a friendly and expressive AI assistant. A user has just said thank you.\n\n"
+                "Reply warmly and naturally in 1–2 sentences. Do NOT repeat the same reply every time.\n"
+                "Use different expressions like:\n"
+                "- Absolutely! Let me know if I can help with anything else.\n"
+                "- Anytime! 😊\n"
+                "- You got it. I'm here for more questions if you have any.\n"
+                "- Happy to help! Feel free to ask more.\n"
+                "- Always a pleasure. Got more questions?\n\n"
+                "Vary your language and tone to feel human, not robotic. Avoid repeating the same response in this conversation."
+            )},
+            {"role": "user", "content": user_input}
+        ]
+
+        try:
+            reply = None
+            MAX_TRIES = 6
+
+            for _ in range(MAX_TRIES):
+                completion = groq_client.chat.completions.create(
+                    messages=gratitude_prompt,
+                    model="llama-3.3-70b-versatile",
+                    temperature=random.uniform(0.85, 1.0),
+                    max_tokens=60
+                )
+                candidate = completion.choices[0].message.content.strip()
+
+                if candidate not in recent_gratitude_replies:
+                    reply = candidate
+                    recent_gratitude_replies.append(reply)
+                    if len(recent_gratitude_replies) > 20:
+                        recent_gratitude_replies.pop(0)
+                    break
+
+            if not reply:
+                fallback_responses = [
+                    "Sure thing! Let me know if I can help with anything else. 😊",
+                    "You're welcome! Always here to help.",
+                    "Anytime! I'm here if more questions come up."
+                ]
+                reply = random.choice(fallback_responses)
+
+            yield reply
+            return
+
+        except Exception as e:
+            logging.error(f"LLM Gratitude Generation Error: {e}")
+            yield "You're welcome! 😊 Let me know if I can assist you with anything else."
+            return
+
+    if detected_intent == "Positive Acknowledgment":
+        logging.info("Handling as: Positive Acknowledgment")
+        reply = "Glad you liked that! 😊 Let me know if you have more questions."
+        yield reply
+        return
+
+    if detected_intent == "Frustration":
+        logging.info("Handling as: Frustration")
+        reply = ("I'm sorry that wasn't helpful. 😔 I'm here to assist you — could you tell me more "
+                 "so I can improve the answer or connect you with support?")
+        yield reply
+        return
 
     logging.info(f"Proceeding with final intent: '{detected_intent}' for query: '{user_input}'")
 
     if detected_intent == "Unknown":
         logging.info(f"Handling as: Unknown (Final)")
-        # Using develop's friendly unknown
-        yield f"I'm here to answer questions about Bravur and IT services. What would you like to know? 🤔";
+        # Using randomized unknown messages with jokes
+        random_message = get_random_unknown_message(session_id or "default")
+        yield random_message
         return
 
     recent_convo_for_response = get_recent_conversation(session_id)
@@ -346,7 +516,7 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     if detected_intent == "IT Trends":
         logging.info(f"Handling as: IT Trends (Final)")
         sys_prompt = (f"You are a knowledgeable AI assistant for Bravur. {tone_instruction}"
-                      f"Provide concise (max 2-3 short sentences) and clear insights on IT services and general technology trends. "
+                      f"Provide somewhat concise (max 4-5 sentences) and clear insights on IT services and general technology trends. "
                       f"Respond in {language_name}. Add one relevant emoji to make the reply engaging. 💡")
         messages = [{"role": "system", "content": sys_prompt}] + recent_convo_for_response + [
             {"role": "user", "content": user_input}]
@@ -356,9 +526,10 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
                                                          max_tokens=300, temperature=0.6, stream=True)
             for chunk in stream:
                 if chunk.choices[0].delta.content: final_response_chunks.append(chunk.choices[0].delta.content); yield \
-                chunk.choices[0].delta.content
+                    chunk.choices[0].delta.content
         except Exception as e:
-            logging.error(f"LLM Error (IT Trends): {e}"); yield "[Error generating IT trends response]"
+            logging.error(f"LLM Error (IT Trends): {e}");
+            yield "[Error generating IT trends response]"
 
     elif detected_intent == "Company Info":  # Also catches refined "Previous Conversation Query" that became Company Info
         logging.info(f"Handling as: RAG Path for Intent='{detected_intent}'")
@@ -374,17 +545,16 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         else:
             semantic_context_parts = []
             for item in search_results:
-                entry_id, title, content, _ = item  # Assuming (id, title, content, similarity)
+                entry_id, title, content, _ = item
                 title_str = f"Title: {title}\n" if title else ""
-                # Using a summary of content for the prompt as per develop's RAG approach, but keeping Row ID
-                summary_content = ' '.join(content.split()[:50]) + "..."  # Summary like develop
+                summary_content = ' '.join(content.split()[:50]) + "..."
                 semantic_context_parts.append(f"Row ID: {entry_id}\n{title_str}Summary: {summary_content}")
             semantic_context_str = "\n\n---\n\n".join(semantic_context_parts)
 
         rag_system_prompt = (
             f"You are a helpful and conversational AI assistant for Bravur, an IT consultancy. Respond in {language_name}. {tone_instruction}"
             f"Answer the user's query based on conversation history and the 'Provided Bravur Summaries' below. "
-            f"Your response should be friendly, clear, and NOT EXCEED 2-3 SHORT SENTENCES. "
+            f"Your response should be friendly, clear, and NOT EXCEED 4-5 SENTENCES. "
             f"If using information from the summaries, CITE THE 'Row ID' like (Row ID: X). "
             f"If the answer is not in the summaries or history, say you don't have that specific detail from Bravur's documentation. "
             f"Add one relevant emoji per answer to make it engaging. ✨\n\n"
@@ -398,9 +568,10 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
                                                            temperature=0.5, stream=True)
             for chunk in stream:
                 if chunk.choices[0].delta.content: final_response_chunks.append(chunk.choices[0].delta.content); yield \
-                chunk.choices[0].delta.content
+                    chunk.choices[0].delta.content
         except Exception as e:
-            logging.error(f"LLM Error (RAG): {e}"); yield "[Error generating RAG response]"
+            logging.error(f"LLM Error (RAG): {e}");
+            yield "[Error generating RAG response]"
     else:  # Fallback if intent is somehow not covered
         logging.warning(f"Fell through main intent handling for '{detected_intent}'. Query: '{user_input}'")
         yield f"I'm a bit unsure how to help with that. I can discuss Bravur or general IT topics in {language_name}.";
@@ -409,16 +580,9 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     # After stream is complete for IT Trends or Company Info/RAG
     if final_response_chunks:
         full_bot_reply = "".join(final_response_chunks)
-        # Apply develop's clean_and_clip_reply to the *final assembled string* if needed,
-        # though the prompt already asks for brevity. Yielding already happened.
-        # This clipping here would only affect what's logged/stored, not what user saw.
-        # For UX, brevity should be in the prompt.
-        # For DB storage, maybe store the slightly longer version if clipping is aggressive.
-        # For now, let's assume the LLM respects the brevity prompt.
+
         logging.info(f"Final assembled response before potential clipping: '{full_bot_reply[:300]}...'")
     return
 
-
-agent_connector = AgentConnector() # Ensure this is defined/imported correctly
+agent_connector = AgentConnector()
 agent_connector.register_agent("Bravur_Information_Agent", company_info_handler_streaming)
-# The gpt_cached_response from your old code is not used in this streaming setup

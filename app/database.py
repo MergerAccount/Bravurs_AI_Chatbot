@@ -1,6 +1,6 @@
 import psycopg2
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from app.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, OPENAI_API_KEY
 from openai import OpenAI
 
@@ -48,28 +48,43 @@ def fetch_relevant_info():
 
 # Create a new chat session with default values and return session_id
 def create_chat_session():
+    print("DEBUG: create_chat_session() called")
     conn = get_db_connection()
     if conn is None:
+        print("DEBUG: Failed to get DB connection")
         logging.error("Failed to get DB connection in create_chat_session")
         return None
 
     try:
         cursor = conn.cursor()
         now = datetime.now()
+        print(f"DEBUG: About to insert session with timestamp: {now}")
+
+        # Insert session WITHOUT is_active column (matches your actual database)
         cursor.execute(
-            "INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes) VALUES (%s, %s, %s) RETURNING session_id",
+            """
+            INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes) 
+            VALUES (%s, %s, %s) 
+            RETURNING session_id
+            """,
             (now, False, 0)
         )
+
         session_id = cursor.fetchone()[0]
+        print(f"DEBUG: Successfully created session_id: {session_id}")
+
         conn.commit()
         cursor.close()
         conn.close()
+        print(f"DEBUG: Session creation completed for session_id: {session_id}")
         logging.info(f"Created new chat session: {session_id}")
-        logging.info(f"Created session {session_id} - intro will be added to first STS interaction automatically")
         return session_id
+
     except Exception as e:
+        print(f"DEBUG: Exception in create_chat_session: {e}")
         logging.error(f"Error creating chat session: {e}")
         if conn:
+            conn.rollback()  # Important: rollback failed transaction
             conn.close()
         return None
 
@@ -114,7 +129,14 @@ def store_message(session_id, content, message_type="user"):
 
 # Retrieve all messages for a given session_id
 def get_session_messages(session_id):
-    if not session_id:
+    # Handle the "None" string case
+    if not session_id or session_id == "None" or session_id == "null":
+        return []
+
+    try:
+        session_id = int(session_id)
+    except (ValueError, TypeError):
+        logging.error(f"Invalid session ID: {session_id}")
         return []
 
     conn = get_db_connection()
@@ -142,18 +164,6 @@ def get_session_messages(session_id):
             conn.close()
         return []
 
-# Call OpenAI to embed a query for semantic search
-def embed_query(query):
-    try:
-        response = client.embeddings.create(
-            input=query,
-            model="text-embedding-3-large"
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        logging.error(f"Error embedding query: {e}")
-        return None
-
 # Use pgvector similarity search to find best semantic matches
 def semantic_search(query_embedding, top_k=5):
     conn = get_db_connection()
@@ -179,6 +189,17 @@ def semantic_search(query_embedding, top_k=5):
     except Exception as e:
         logging.error(f"Semantic search failed: {e}")
         return []
+
+def embed_query(query):
+    try:
+        response = client.embeddings.create(
+            input=query,
+            model="text-embedding-3-large"
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        logging.error(f"Error embedding query: {e}")
+        return None
 
 # Run both semantic and fallback keyword search if needed
 def hybrid_search(query, top_k=5):
@@ -256,3 +277,80 @@ def update_pending_embeddings():
         conn.close()
     except Exception as e:
         logging.error(f"Error during embedding update: {e}")
+
+def is_session_active(session_id):
+    """
+    Check if a session exists and is active
+    Returns: True if active, False if inactive/doesn't exist
+    """
+    conn = get_db_connection()
+    if conn is None:
+        logging.error("Failed to get DB connection in is_session_active")
+        return False
+
+    try:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT is_active FROM chat_session WHERE session_id = %s",
+            (session_id,)
+        )
+
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if result is None:
+            # Session doesn't exist
+            logging.warning(f"Session {session_id} does not exist")
+            return False
+
+        is_active = result[0]
+        if not is_active:
+            logging.warning(f"Session {session_id} is inactive")
+
+        return is_active
+
+    except Exception as e:
+        logging.error(f"Error checking session activity: {e}")
+        if conn:
+            conn.close()
+        return False
+
+def is_session_expired(session_id, expiration_hours=72):
+    """
+    Returns True if the session is older than `expiration_hours` or doesn't exist.
+    """
+    conn = get_db_connection()
+    if conn is None:
+        logging.error("Failed to get DB connection in is_session_expired")
+        return True
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT timestamp FROM chat_session WHERE session_id = %s", (session_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if row is None:
+            return True
+
+        session_time = row[0]
+
+        # ✅ Make it timezone-aware if it isn't already
+        if session_time.tzinfo is None:
+            session_time = session_time.replace(tzinfo=timezone.utc)
+
+        expiration_time = session_time + timedelta(days=3)
+        return datetime.now(timezone.utc) > expiration_time
+
+    except Exception as e:
+        print(f"Error checking session expiration: {e}")
+        return True
+
+def is_session_valid(session_id):
+    if is_session_expired(session_id):
+        return False
+    return is_session_active(session_id)
+
