@@ -71,20 +71,27 @@ def create_chat_session():
         )
 
         session_id = cursor.fetchone()[0]
-        print(f"DEBUG: Successfully created session_id: {session_id}")
-
         conn.commit()
         cursor.close()
         conn.close()
-        print(f"DEBUG: Session creation completed for session_id: {session_id}")
+
+        print(f"DEBUG: Successfully created session_id: {session_id}")
         logging.info(f"Created new chat session: {session_id}")
+
+        # Initialize Redis limit (if not already set)
+        from app.rate_limiter import r, SESSION_MAX_REQUESTS
+        meta_key = f"rate_limit:meta:{session_id}"
+        if not r.hexists(meta_key, "limit"):
+            r.hset(meta_key, mapping={"limit": SESSION_MAX_REQUESTS})
+            print(f"DEBUG: Redis meta limit set for session {session_id} → {SESSION_MAX_REQUESTS}")
+
         return session_id
 
     except Exception as e:
         print(f"DEBUG: Exception in create_chat_session: {e}")
         logging.error(f"Error creating chat session: {e}")
         if conn:
-            conn.rollback()  # Important: rollback failed transaction
+            conn.rollback()
             conn.close()
         return None
 
