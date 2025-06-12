@@ -29,13 +29,13 @@ except redis.exceptions.ConnectionError as e:
     raise Exception("Redis connection failed for rate limiting. Please check your Redis configuration.")
 
 # Rate limit configuration
-SESSION_MAX_REQUESTS = 20
+SESSION_MAX_REQUESTS = 25
 SESSION_WINDOW_SECONDS = 3600
 
 IP_MAX_REQUESTS = 30000
 IP_WINDOW_SECONDS = 60
 
-FINGERPRINT_MAX_REQUESTS = 20
+FINGERPRINT_MAX_REQUESTS = 25
 FINGERPRINT_WINDOW_SECONDS = 3600
 
 
