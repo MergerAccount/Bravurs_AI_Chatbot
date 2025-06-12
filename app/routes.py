@@ -7,6 +7,12 @@ from app.database import create_chat_session, store_message
 from flask import Blueprint, request, jsonify, render_template, session
 from app.controllers.consent_controller import handle_accept_consent, handle_withdraw_consent, check_consent_status
 from app.speech import speech_to_speech, save_audio_file
+from app.database import create_chat_session, store_message
+from app.rate_limiter import (
+    check_session_rate_limit, check_ip_rate_limit,
+    get_session_rate_status, mark_captcha_solved,
+    get_fingerprint_rate_status, mark_captcha_solved_fingerprint
+)
 import base64
 
 # API ROUTES under /api/v1
@@ -97,6 +103,56 @@ def check_consent(session_id):
     """Check consent status for a session"""
     result = check_consent_status(session_id)
     return jsonify(result)
+
+# === CAPTCHA RATE LIMIT ROUTES ===
+@routes.route("/ratelimit/check", methods=["POST"])
+def ratelimit_check():
+    # Accept fingerprint or session_id in JSON or form
+    fingerprint = None
+    session_id = None
+    if request.content_type and 'application/json' in request.content_type:
+        data = request.get_json()
+        fingerprint = data.get("fingerprint")
+        session_id = data.get("session_id")
+    else:
+        fingerprint = request.form.get("fingerprint")
+        session_id = request.form.get("session_id")
+    if not fingerprint:
+        fingerprint = request.headers.get("X-Client-Fingerprint")
+    try:
+        if fingerprint:
+            data = get_fingerprint_rate_status(fingerprint)
+        elif session_id:
+            data = get_session_rate_status(session_id)
+        else:
+            return jsonify(success=False, error="Missing fingerprint or session_id"), 400
+        return jsonify(data)
+    except Exception as e:
+        return jsonify(success=False, error=str(e)), 500
+
+@routes.route("/ratelimit/captcha-solved", methods=["POST"])
+def captcha_solved():
+    fingerprint = None
+    session_id = None
+    if request.content_type and 'application/json' in request.content_type:
+        data = request.get_json()
+        fingerprint = data.get("fingerprint")
+        session_id = data.get("session_id")
+    else:
+        fingerprint = request.form.get("fingerprint")
+        session_id = request.form.get("session_id")
+    if not fingerprint:
+        fingerprint = request.headers.get("X-Client-Fingerprint")
+    try:
+        if fingerprint:
+            new_limit = mark_captcha_solved_fingerprint(fingerprint)
+        elif session_id:
+            new_limit = mark_captcha_solved(session_id)
+        else:
+            return jsonify(success=False, error="Missing fingerprint or session_id"), 400
+        return jsonify(success=True, new_limit=new_limit)
+    except Exception as e:
+        return jsonify(success=False, error=str(e)), 500
 
 # === LANGUAGE ROUTE ===
 @routes.route("/language_change", methods=["POST"])
