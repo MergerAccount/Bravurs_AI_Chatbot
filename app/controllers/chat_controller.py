@@ -22,21 +22,27 @@ def handle_chat():
         print(f"JSON parse error: {e}")
     print(f"Headers: {dict(request.headers)}")
 
+    fingerprint = None
     if request.content_type and 'application/json' in request.content_type:
         data = request.get_json()
         if not data:
             return jsonify({"error": "No data provided"}), 400
         user_input = data.get("message") or data.get("user_input")
         session_id = data.get("session_id")
+        fingerprint = data.get("fingerprint")
         language = data.get("language", "nl-NL")
         request_type = "json"
     else:
         user_input = request.form.get("user_input")
         session_id = request.form.get("session_id")
-        language = request.form.get("language", "nl-NL")
+        fingerprint = request.form.get("fingerprint")
         user_agent = request.headers.get('User-Agent', '')
         referrer = request.headers.get('Referer', '')
+        language = request.form.get("language", "nl-NL")
         request_type = "wordpress" if 'WordPress' in user_agent or 'bravurwp.local' in referrer else "form"
+    # Also check for fingerprint in header
+    if not fingerprint:
+        fingerprint = request.headers.get("X-Client-Fingerprint")
 
     print(f"Detected request type: {request_type}")
     print(f"User input: {user_input}")
@@ -70,29 +76,51 @@ def handle_chat():
             "new_session_required": True
         }), 403
 
-    # Apply session-based rate limit with CAPTCHA logic
-    allowed_session, session_retry_after, captcha_required = check_session_rate_limit(session_id)
-
-    # Use the existing Redis connection for logging
-    try:
-        count = redis_client.get(f"rate_limit:session:{session_id}") or 0
-        print(f"🔢 Session {session_id} has made {count} requests so far.")
-    except Exception as e:
-        print(f"⚠️ Failed to fetch rate count from Redis: {e}")
-
-    if not allowed_session:
+    # Rate limiting logic
+    allowed = True
+    retry_after = 0
+    captcha_required = False
+    rate_status = None
+    if fingerprint:
+        from app.rate_limiter import check_fingerprint_rate_limit, get_fingerprint_rate_status
+        allowed, retry_after, captcha_required = check_fingerprint_rate_limit(fingerprint)
+        rate_status = get_fingerprint_rate_status(fingerprint)
+        rate_id = fingerprint
+        rate_type = 'fingerprint'
+    elif session_id:
+        allowed, retry_after, captcha_required = check_session_rate_limit(session_id)
+        rate_status = get_session_rate_status(session_id)
+        rate_id = session_id
+        rate_type = 'session'
+    else:
+        from app.routes import get_client_ip
+        user_ip = get_client_ip()
+        from app.rate_limiter import check_ip_rate_limit
+        allowed, retry_after = check_ip_rate_limit(user_ip)
+        captcha_required = False
+        rate_status = None
+        rate_id = user_ip
+        rate_type = 'ip'
+    if not allowed:
         return jsonify({
-            "error": f"Too many requests for this session. Please try again in {session_retry_after} seconds."
-        }), 429, {'Retry-After': str(session_retry_after)}
-
+            "error": f"Too many requests for this {rate_type}. Please try again in {retry_after} seconds."
+        }), 429, {'Retry-After': str(retry_after)}
     if captcha_required:
-        status = get_session_rate_status(session_id)
         return jsonify({
             "error": "CAPTCHA required before continuing",
             "captcha_required": True,
-            "count": status['count'],
-            "limit": status['limit']
+            "count": rate_status['count'] if rate_status else None,
+            "limit": rate_status['limit'] if rate_status else None,
+            "rate_type": rate_type
         }), 403
+
+    # Improved logging for rate limiting key
+    if fingerprint:
+        count = redis_client.get(f"rate_limit:fingerprint:{fingerprint}") or 0
+        print(f"🔢 Fingerprint {fingerprint} has made {count} requests so far.")
+    elif session_id:
+        count = redis_client.get(f"rate_limit:session:{session_id}") or 0
+        print(f"🔢 Session {session_id} has made {count} requests so far.")
 
     MAX_INPUT_CHARS = 1000
     if len(user_input) > MAX_INPUT_CHARS:
