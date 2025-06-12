@@ -29,11 +29,14 @@ except redis.exceptions.ConnectionError as e:
     raise Exception("Redis connection failed for rate limiting. Please check your Redis configuration.")
 
 # Rate limit configuration
-SESSION_MAX_REQUESTS = 4
+SESSION_MAX_REQUESTS = 20
 SESSION_WINDOW_SECONDS = 3600
 
 IP_MAX_REQUESTS = 30000
 IP_WINDOW_SECONDS = 60
+
+FINGERPRINT_MAX_REQUESTS = 20
+FINGERPRINT_WINDOW_SECONDS = 3600
 
 
 def check_session_rate_limit(session_id: str) -> tuple[bool, int, bool]:
@@ -94,3 +97,39 @@ def check_ip_rate_limit(user_ip: str) -> tuple[bool, int]:
 def reset_rate_limits():
     logging.warning("Resetting Redis-based rate limits. For production, rely on natural key expiration.")
     pass
+
+
+def check_fingerprint_rate_limit(fingerprint: str) -> tuple[bool, int, bool]:
+    key = f"rate_limit:fingerprint:{fingerprint}"
+    count = r.incr(key)
+    if count == 1:
+        r.expire(key, FINGERPRINT_WINDOW_SECONDS)
+    logging.info(f"Fingerprint {fingerprint} current request count: {count}")
+    limit = FINGERPRINT_MAX_REQUESTS
+    if count >= int(limit * 0.9):
+        return True, 0, True  # allowed, no retry, captcha required
+    if count > limit:
+        remaining_time = r.ttl(key)
+        return False, max(0, remaining_time), False
+    return True, 0, False
+
+
+def mark_captcha_solved_fingerprint(fingerprint: str) -> int:
+    key = f"rate_limit:fingerprint:{fingerprint}"
+    before = r.get(key)
+    r.set(key, 0, ex=FINGERPRINT_WINDOW_SECONDS)
+    after = r.get(key)
+    logging.info(f"CAPTCHA solved for fingerprint {fingerprint}. Count before reset: {before}, after reset: {after}. Limit reset to: {FINGERPRINT_MAX_REQUESTS}")
+    return FINGERPRINT_MAX_REQUESTS
+
+
+def get_fingerprint_rate_status(fingerprint: str) -> dict:
+    key = f"rate_limit:fingerprint:{fingerprint}"
+    limit = FINGERPRINT_MAX_REQUESTS
+    count = int(r.get(key) or 0)
+    return {
+        "success": True,
+        "count": count,
+        "limit": limit,
+        "captcha_required": count >= int(limit * 0.9)
+    }
