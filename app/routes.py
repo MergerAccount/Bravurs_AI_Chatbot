@@ -16,6 +16,7 @@ from app.rate_limiter import (
     get_fingerprint_rate_status, mark_captcha_solved_fingerprint
 )
 
+# === API ROUTES under /api/v1 ===
 routes = Blueprint("routes", __name__, url_prefix="/api/v1")
 
 def get_client_ip():
@@ -26,6 +27,12 @@ def get_client_ip():
 
 @routes.route("/chat", methods=["POST"])
 def chat():
+    """Modified to handle WordPress requests"""
+
+    user_input = request.json.get("input", "")
+    if len(user_input) >= 1000 or len(user_input.split()) >= 150:
+        return jsonify({"error": "Input too long. Max 150 words or 1000 characters."}), 400
+
     return handle_chat()
 
 @routes.route("/feedback", methods=["POST"])
@@ -51,6 +58,7 @@ def create_session():
             "error": "Failed to create session"
         }), 500
     except Exception as e:
+        print(f"DEBUG: Exception in session creation: {e}")
         import logging
         logging.error(f"Error in session creation endpoint: {e}")
         return jsonify({
@@ -61,14 +69,17 @@ def create_session():
 # === CONSENT ROUTES ===
 @routes.route('/consent/accept', methods=['POST'])
 def accept_consent():
+    """Handle consent acceptance from WordPress"""
     return handle_accept_consent()
 
 @routes.route('/consent/withdraw', methods=['POST'])
 def withdraw_consent():
+    """Handle consent withdrawal from WordPress"""
     return handle_withdraw_consent()
 
 @routes.route('/consent/check/<session_id>', methods=['GET'])
 def check_consent(session_id):
+    """Check consent status for a session"""
     result = check_consent_status(session_id)
     return jsonify(result)
 
@@ -126,6 +137,7 @@ def captcha_solved():
 @routes.route("/language_change", methods=["POST"])
 def language_change():
     session_id = request.form.get("session_id")
+    language = request.form.get("language")
     from_language = request.form.get("from_language")
     to_language = request.form.get("to_language")
     if session_id:
@@ -137,61 +149,83 @@ def language_change():
 # === SPEECH ROUTES ===
 @routes.route("/tts", methods=["POST"])
 def text_to_speech_api():
+    """Text-to-speech endpoint"""
     from app.speech import text_to_speech
     data = request.get_json()
     text = data.get("text", "")
     language = data.get("language", "en-US")
+
     if not text:
         return jsonify({"error": "No text provided"}), 400
+
     audio_path = text_to_speech(text, language)
     if not audio_path:
         return jsonify({"error": "TTS failed"}), 500
+
     def generate():
         with open(audio_path, "rb") as f:
             yield from f
+
     return Response(generate(), mimetype="audio/wav")
 
 @routes.route("/stt", methods=["POST"])
 def speech_to_text_api():
+    """Speech-to-text endpoint for WordPress voice input"""
     from app.speech import speech_to_text
+
     data = request.get_json() or {}
     language = data.get("language")
+
     result = speech_to_text(language)
     return jsonify(result)
 
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
+    """Speech-to-speech endpoint"""
     try:
+        # Get language and session ID from form data
         language = request.form.get('language')
         session_id = request.form.get('session_id')
+
+        print(f"Received STS request with language: {language}, session_id: {session_id}")
+
+        # Use the updated speech_to_speech function with both parameters
         result = speech_to_speech(language=language, session_id=session_id)
+
         if not result:
+            print("No valid speech input detected or processing failed")
             return jsonify({
                 "error": "Speech processing failed",
                 "message": "No speech detected. Please try again."
             }), 400
+
         with open(result["audio_path"], "rb") as f:
             audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+
         try:
             os.remove(result["audio_path"])
         except Exception as e:
             print(f"Error removing temp file: {e}")
+
         return jsonify({
             "user_text": result["original_text"],
             "bot_text": result["response_text"],
             "audio_base64": audio_base64
         })
     except Exception as e:
+        print(f"Error in speech-to-speech: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # === HEALTH CHECK ===
 @routes.route("/health", methods=["GET"])
 def health_check():
+    """Health check endpoint"""
     return jsonify({"status": "healthy", "service": "Bravur Chatbot API"})
 
 # === CORS HEADERS FOR WORDPRESS ===
 @routes.after_request
 def after_request(response):
+    """Add CORS headers for WordPress integration"""
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')

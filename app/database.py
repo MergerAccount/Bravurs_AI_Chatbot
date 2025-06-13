@@ -1,6 +1,6 @@
 import psycopg2
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from app.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, OPENAI_API_KEY
 from openai import OpenAI
 
@@ -285,115 +285,6 @@ def update_pending_embeddings():
     except Exception as e:
         logging.error(f"Error during embedding update: {e}")
 
-
-def check_actual_schema():
-    try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
-        cursor = conn.cursor()
-
-        print("🔍 CHECKING ACTUAL DATABASE SCHEMA")
-        print("=" * 60)
-
-        # Check chat_session table structure
-        print("📋 ACTUAL chat_session table columns:")
-        cursor.execute("""
-            SELECT column_name, data_type, is_nullable, column_default
-            FROM information_schema.columns 
-            WHERE table_name = 'chat_session'
-            ORDER BY ordinal_position
-        """)
-        columns = cursor.fetchall()
-
-        if not columns:
-            print("❌ chat_session table not found!")
-            return
-
-        column_names = []
-        for col in columns:
-            nullable = "NULL" if col[2] == "YES" else "NOT NULL"
-            default = f"DEFAULT: {col[3]}" if col[3] else "NO DEFAULT"
-            print(f"   ✅ {col[0]} ({col[1]}) - {nullable} - {default}")
-            column_names.append(col[0])
-
-        print(f"\n📝 Available columns: {column_names}")
-
-        # Check if is_active exists
-        has_is_active = 'is_active' in column_names
-        print(f"🔍 Has is_active column: {has_is_active}")
-
-        print("\n" + "=" * 60)
-
-        # Test session creation with actual columns
-        print("🧪 TESTING SESSION CREATION:")
-
-        from datetime import datetime
-        now = datetime.now()
-
-        if has_is_active:
-            # Try with is_active
-            try:
-                cursor.execute("""
-                    INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes, is_active) 
-                    VALUES (%s, %s, %s, %s) 
-                    RETURNING session_id
-                """, (now, False, 0, True))
-
-                session_id = cursor.fetchone()[0]
-                conn.commit()
-                print(f"✅ SUCCESS with is_active! Session ID: {session_id}")
-
-            except Exception as e:
-                print(f"❌ FAILED with is_active: {e}")
-                conn.rollback()
-        else:
-            # Try without is_active
-            try:
-                cursor.execute("""
-                    INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes) 
-                    VALUES (%s, %s, %s) 
-                    RETURNING session_id
-                """, (now, False, 0))
-
-                session_id = cursor.fetchone()[0]
-                conn.commit()
-                print(f"✅ SUCCESS without is_active! Session ID: {session_id}")
-
-            except Exception as e:
-                print(f"❌ FAILED without is_active: {e}")
-                conn.rollback()
-
-        print("\n" + "=" * 60)
-
-        # Generate correct Python code
-        print("💻 CORRECT PYTHON CODE FOR YOUR DATABASE:")
-        print()
-
-        if has_is_active:
-            print("""cursor.execute('''
-    INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes, is_active) 
-    VALUES (%s, %s, %s, %s) 
-    RETURNING session_id
-''', (now, False, 0, True))""")
-        else:
-            print("""cursor.execute('''
-    INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes) 
-    VALUES (%s, %s, %s) 
-    RETURNING session_id
-''', (now, False, 0))""")
-
-        cursor.close()
-        conn.close()
-
-    except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-
-
 def is_session_active(session_id):
     """
     Check if a session exists and is active
@@ -433,6 +324,40 @@ def is_session_active(session_id):
             conn.close()
         return False
 
-if __name__ == "__main__":
-    check_actual_schema()
+def is_session_expired(session_id, expiration_hours=72):
+    """
+    Returns True if the session is older than `expiration_hours` or doesn't exist.
+    """
+    conn = get_db_connection()
+    if conn is None:
+        logging.error("Failed to get DB connection in is_session_expired")
+        return True
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT timestamp FROM chat_session WHERE session_id = %s", (session_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if row is None:
+            return True
+
+        session_time = row[0]
+
+        # ✅ Make it timezone-aware if it isn't already
+        if session_time.tzinfo is None:
+            session_time = session_time.replace(tzinfo=timezone.utc)
+
+        expiration_time = session_time + timedelta(days=3)
+        return datetime.now(timezone.utc) > expiration_time
+
+    except Exception as e:
+        print(f"Error checking session expiration: {e}")
+        return True
+
+def is_session_valid(session_id):
+    if is_session_expired(session_id):
+        return False
+    return is_session_active(session_id)
 
