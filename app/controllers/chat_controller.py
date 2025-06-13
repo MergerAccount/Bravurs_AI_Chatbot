@@ -10,6 +10,8 @@ from app.database import is_session_active
 
 from app.database import create_chat_session, store_message, is_session_active
 from app.rate_limiter import check_session_rate_limit, get_session_rate_status, r as redis_client  # Updated import
+from app.database import create_chat_session, store_message, is_session_active
+from app.rate_limiter import check_session_rate_limit, get_session_rate_status, r as redis_client  # Updated import
 
 def handle_chat():
     """
@@ -43,6 +45,16 @@ def handle_chat():
         fingerprint = request.form.get("fingerprint")
         user_agent = request.headers.get('User-Agent', '')
         referrer = request.headers.get('Referer', '')
+        language = request.form.get("language", "nl-NL")
+        request_type = "wordpress" if 'WordPress' in user_agent or 'bravurwp.local' in referrer else "form"
+    # Also check for fingerprint in header
+    if not fingerprint:
+        fingerprint = request.headers.get("X-Client-Fingerprint")
+
+    print(f"Detected request type: {request_type}")
+    print(f"User input: {user_input}")
+    print(f"Session ID: {session_id}")
+    print(f"Language: {language}")
         language = request.form.get("language", "nl-NL")
         request_type = "wordpress" if 'WordPress' in user_agent or 'bravurwp.local' in referrer else "form"
     # Also check for fingerprint in header
