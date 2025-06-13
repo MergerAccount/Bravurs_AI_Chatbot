@@ -34,7 +34,7 @@ def create_app():
     # Enable CORS for WordPress integration
     CORS(app, resources={
         r"/api/*": {
-            "origins": ["http://bravurwp.local"],
+            "origins": ["http://bravurwp.local", "https://bravurwp.local"],
             "methods": ["GET", "POST", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization"]
         }
