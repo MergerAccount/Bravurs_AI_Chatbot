@@ -462,13 +462,15 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     # --- Human Support (Internationalize this response too) ---
     if detected_intent == "Human Support Service Request":
         logging.info(f"Handling as: Human Support (Initial)")
+        truncated_session_suffix = get_session_id_suffix(session_id, language)
+
         if language == "nl-NL":
             reply = "Natuurlijk! Je kunt ons menselijke supportteam bereiken via WhatsApp op +31 6 12345678 of per e-mail op support@bravur.com."
-            if session_id: reply += f" Vermeld alstublieft uw sessie-ID: {session_id} wanneer u contact opneemt. Hoe kan ik je ondertussen helpen? 😊"
+            reply += f"{truncated_session_suffix} Hoe kan ik je ondertussen helpen? 😊"
         else:
             reply = ("You can reach our human support team on WhatsApp at +31 6 12345678 "
                      "or by email at support@bravur.com.")
-            if session_id: reply += f" When contacting support, please mention your session ID: {session_id}. How can I help in the meantime? 😊"
+            reply += f"{truncated_session_suffix} How can I help in the meantime? 😊"
         yield reply
         return
 
