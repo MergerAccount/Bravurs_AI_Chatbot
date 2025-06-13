@@ -21,6 +21,7 @@ from app.database import (
     hybrid_search,
     embed_query
 )
+from app.web import search_web
 
 # Initialize OpenAI client (for RAG response generation with GPT-4o Mini & embeddings via database.py)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -618,25 +619,78 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     # --- Final Response Generation ---
     final_response_chunks = []
     if detected_intent == "IT Trends":
-        logging.info(f"Handling as: IT Trends (Final)")
-        sys_prompt = (f"You are a knowledgeable AI assistant for Bravur. {tone_instruction}"
-                      f"Provide somewhat concise (max 4-5 sentences) and clear insights on IT services and general technology trends. "
-                      f"Respond in {language_name}. Add one relevant emoji to make the reply engaging. 💡")
-        messages = [{"role": "system", "content": sys_prompt}] + recent_convo_for_response + [
-            {"role": "user", "content": user_input}]
+        logging.info(f"Handling as: IT Trends (SerperAPI) for query: '{user_input}'")
+        yield "Searching the web for the latest IT trends... 🌐\n"
+
+        site_constraints_list = []
+        user_input_lower = user_input.lower()
+        if "mckinsey" in user_input_lower:
+            site_constraints_list.append("site:mckinsey.com")
+        if "gartner" in user_input_lower:
+            site_constraints_list.append("site:gartner.com")
+
+        site_constraint_query_str = " OR ".join(site_constraints_list) if site_constraints_list else None
+
+        search_data = search_web(user_input, site_constraint=site_constraint_query_str)
+
+        search_snippets = []
+        if search_data.get("error"):
+            logging.warning(f"SerperAPI search returned an error: {search_data['error']}")
+        elif "organic" in search_data and search_data["organic"]:
+            results = search_data["organic"][:5]  # Process top 5 relevant results
+            for r_item in results:
+                title = r_item.get('title', 'N/A')
+                link = r_item.get('link', 'N/A')
+                snippet_text = r_item.get('snippet', 'N/A')
+                if title and link and snippet_text:  # Ensure essential parts are present
+                    search_snippets.append(f"Title: {title}\nLink: {link}\nSnippet: {snippet_text}")
+        else:
+            logging.info(f"No organic results from SerperAPI search for '{user_input}'.")
+
+        if search_snippets:
+            search_context_str = "\n\n---\n\n".join(search_snippets)
+            it_trends_sys_prompt = (
+                f"You are a helpful AI assistant for Bravur. {tone_instruction} "
+                f"The user asked about IT trends: '{user_input}'. "
+                f"Below are web search results. Summarize the key information and insights related to the query. "
+                f"If results from McKinsey or Gartner are present and relevant, prioritize them. "
+                f"Provide a concise answer (target 3-5 sentences, but can be longer if summarizing multiple rich sources). Respond in {language_name}. "
+                f"Cite relevant source links (e.g., [Source: URL]) if you use specific information from them. Avoid just listing links. "
+                f"Add one relevant emoji. 🔍\n\n"
+                f"Web Search Results:\n{search_context_str}"
+            )
+        else:  # No useful search results or search failed
+            # Give feedback about search failure before general knowledge answer
+            yield "I couldn't find specific details from a web search for that IT trend. I'll provide a general overview based on my knowledge.\n"
+            it_trends_sys_prompt = (
+                f"You are a knowledgeable AI assistant for Bravur. {tone_instruction} "
+                f"A web search for '{user_input}' did not return specific results. "
+                f"Please provide a general overview (max 4-5 sentences) on this IT trend based on your existing knowledge. "
+                f"If you have general knowledge about reports from sources like McKinsey or Gartner on this topic, you can mention them. "
+                f"Respond in {language_name}. Add one relevant emoji to make the reply engaging. 💡"
+            )
+
+        messages_for_llm = [{"role": "system", "content": it_trends_sys_prompt}] + \
+                           recent_convo_for_response + \
+                           [{"role": "user", "content": user_input}]
+
         try:
-            # Using Groq Llama 3 70B for better quality IT Trend answers
-            stream = groq_client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages,
-                                                         max_tokens=300, temperature=0.6, stream=True)
-            for chunk in stream:
-                if chunk.choices[0].delta.content: final_response_chunks.append(chunk.choices[0].delta.content); yield \
-                    chunk.choices[0].delta.content
+            logging.info(
+                f"Using Groq Llama 3 70B for IT Trend (Serper/Fallback) response generation. System prompt starts with: {it_trends_sys_prompt[:200]}...")
+            stream = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages_for_llm,
+                max_tokens=450,
+                temperature=0.5,
+                stream=True
+            )
+            for chunk_obj in stream:
+                if chunk_obj.choices[0].delta.content:
+                    final_response_chunks.append(chunk_obj.choices[0].delta.content)
+                    yield chunk_obj.choices[0].delta.content
         except Exception as e:
-            logging.error(f"LLM Error (IT Trends): {e}")
-            if language == "nl-NL":
-                yield "[Fout bij het genereren van IT-trends antwoord]"
-            else:
-                yield "[Error generating IT trends response]"
+            logging.error(f"LLM Error (IT Trends with Serper/Fallback): {e}")
+            yield "[Error generating IT trends response]"
 
     elif detected_intent == "Company Info":  # Also catches refined "Previous Conversation Query" that became Company Info
         logging.info(f"Handling as: RAG Path for Intent='{detected_intent}'")
