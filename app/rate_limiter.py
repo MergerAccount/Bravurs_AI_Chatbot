@@ -29,13 +29,13 @@ except redis.exceptions.ConnectionError as e:
     raise Exception("Redis connection failed for rate limiting. Please check your Redis configuration.")
 
 # Rate limit configuration
-SESSION_MAX_REQUESTS = 25
+SESSION_MAX_REQUESTS = 40
 SESSION_WINDOW_SECONDS = 3600
 
 IP_MAX_REQUESTS = 30000
 IP_WINDOW_SECONDS = 60
 
-FINGERPRINT_MAX_REQUESTS = 25
+FINGERPRINT_MAX_REQUESTS = 40
 FINGERPRINT_WINDOW_SECONDS = 3600
 
 
@@ -116,10 +116,8 @@ def check_fingerprint_rate_limit(fingerprint: str) -> tuple[bool, int, bool]:
 
 def mark_captcha_solved_fingerprint(fingerprint: str) -> int:
     key = f"rate_limit:fingerprint:{fingerprint}"
-    before = r.get(key)
     r.set(key, 0, ex=FINGERPRINT_WINDOW_SECONDS)
-    after = r.get(key)
-    logging.info(f"CAPTCHA solved for fingerprint {fingerprint}. Count before reset: {before}, after reset: {after}. Limit reset to: {FINGERPRINT_MAX_REQUESTS}")
+    logging.info(f"CAPTCHA solved for fingerprint {fingerprint}. Limit reset to: {FINGERPRINT_MAX_REQUESTS}")
     return FINGERPRINT_MAX_REQUESTS
 
 
