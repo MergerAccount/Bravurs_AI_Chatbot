@@ -21,6 +21,7 @@ from app.database import (
     hybrid_search,
     embed_query
 )
+from app.web import search_web
 
 # Initialize OpenAI client (for RAG response generation with GPT-4o Mini & embeddings via database.py)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -46,64 +47,115 @@ CONTEXTUAL_CUES_KEYWORDS = [
 session_unknown_messages = {}
 
 # Pool of randomized unknown intent messages
-UNKNOWN_INTENT_MESSAGES = [
-    "I'm here to answer questions about Bravur and IT services. What would you like to know? 🤔",
-    "I specialize in Bravur topics and IT trends. How can I assist you with those? 💡",
-    "My expertise is in Bravur services and general IT matters. What can I help you explore? 🤔",
-    "I'm best at discussing Bravur and technology topics. What interests you most? 💻",
-    "Let’s keep it Bravur or IT trend-focused — what would you like to discuss? ⚡"
-]
+UNKNOWN_INTENT_MESSAGES = {
+    "en-US": [
+        "I'm here to answer questions about Bravur and IT services. What would you like to know? 🤔",
+        "I specialize in Bravur topics and IT trends. How can I assist you with those? 💡",
+        "My expertise is in Bravur services and general IT matters. What can I help you explore? 🤔",
+        "I'm best at discussing Bravur and technology topics. What interests you most? 💻",
+        "Let’s keep it Bravur or IT trend-focused — what would you like to discuss? ⚡"
+    ],
+    "nl-NL": [
+        "Ik ben hier om vragen over Bravur en IT-diensten te beantwoorden. Wat zou je willen weten? 🤔",
+        "Ik ben gespecialiseerd in Bravur-onderwerpen en IT-trends. Hoe kan ik je daarmee helpen? 💡",
+        "Mijn expertise ligt bij Bravur-diensten en algemene IT-zaken. Wat kan ik voor je uitzoeken? 🤔",
+        "Ik ben het best in het bespreken van Bravur en technologische onderwerpen. Wat interesseert je het meest? 💻",
+        "Laten we het Bravur- of IT-trendgericht houden — wat zou je willen bespreken? ⚡"
+    ]
+}
 
-# Pool of joke endings for unknown queries
-UNKNOWN_JOKE_ENDINGS = [
-    " By the way, if you need human support, our team is available on WhatsApp at +31 6 12345678 or email support@bravur.com - they're way smarter than me! 😄",
-    " If you'd prefer chatting with a real human (who probably knows more than me), reach out to +31 6 12345678 or support@bravur.com! 😊",
-    " For anything beyond my expertise, our human support team at +31 6 12345678 or support@bravur.com can help. 🌟",
-    " If I'm not hitting the mark, our fantastic human team at +31 6 12345678 or support@bravur.com is ready to save the day! 🦸‍♂️",
-    " And if it's something I can't answer, our brilliant team at +31 6 12345678 or support@bravur.com has all the deep Bravur knowledge you need. 🧠"
-]
+# Pool of contact support endings for unknown queries
+UNKNOWN_SUPPORT_ENDINGS = {
+    "en-US": [
+        " By the way, if you need human support, our team is available on WhatsApp at +31 6 12345678 or email support@bravur.com - they're smarter than me! 😄",
+        " If you'd prefer chatting with a real human (who probably knows more than me), reach out to +31 6 12345678 or support@bravur.com! 😊",
+        " For anything beyond my expertise, our human support team at +31 6 12345678 or support@bravur.com can help. 🌟",
+        " If I'm not hitting the mark, our fantastic human team at +31 6 12345678 or support@bravur.com is ready to save the day! 🦸‍♂️",
+        " And if it's something I can't answer, our brilliant team at +31 6 12345678 or support@bravur.com has all the deep Bravur knowledge you need. 🧠"
+    ],
+    "nl-NL": [
+        " Trouwens, als je menselijke ondersteuning nodig hebt, is ons team beschikbaar via WhatsApp op +31 6 12345678 of per e-mail op support@bravur.com - zij zijn slimmer dan ik! 😄",
+        " Als je liever met een echt mens chat (die waarschijnlijk meer weet dan ik), neem dan contact op via +31 6 12345678 of support@bravur.com! 😊",
+        " Voor alles buiten mijn expertise kan ons menselijke supportteam via +31 6 12345678 of support@bravur.com helpen. 🌟",
+        " Als ik de plank missla, staat ons fantastische menselijke team via +31 6 12345678 of support@bravur.com klaar om de dag te redden! 🦸‍♂️",
+        " En als het iets is dat ik niet kan beantwoorden, heeft ons briljante team via +31 6 12345678 of support@bravur.com alle diepgaande Bravur-kennis die je nodig hebt. 🧠"
+    ]
+}
 
 
 # Session ID suffix for human support jokes
-def get_session_id_suffix(session_id: str) -> str:
-    """Generate session ID mention for human support contact"""
-    if session_id and session_id != "default":
+def get_session_id_suffix(session_id: str, language: str = "en-US") -> str:
+    """Generate session ID mention for human support contact in the correct language."""
+    if not session_id or session_id == "default":
+        return ""
+
+    if language == "nl-NL":
+        return f" Vermeld alstublieft uw sessie-ID: {session_id} wanneer u contact opneemt."
+    else:
         return f" Please mention your session ID: {session_id} when contacting them."
-    return ""
 
 
-def get_random_unknown_message(session_id: str) -> str:
+def get_random_unknown_message(session_id: str, language: str = "en-US") -> str:  # Added language parameter
     """
-    Get a randomized unknown intent message, ensuring variety within each session.
-    Won't repeat messages until all have been used in the session.
+    Get a randomized unknown intent message in the specified language,
+    ensuring variety within each session for that language.
     """
+    # Determine the language code to use, defaulting to English if invalid
+    lang_code = language if language in UNKNOWN_INTENT_MESSAGES else "en-US"
+    logging.debug(f"get_random_unknown_message called with language: {language}, resolved to lang_code: {lang_code}")
+
+    # Ensure session_id structure exists
     if session_id not in session_unknown_messages:
-        session_unknown_messages[session_id] = {
-            'unused_messages': UNKNOWN_INTENT_MESSAGES.copy(),
-            'unused_jokes': UNKNOWN_JOKE_ENDINGS.copy()
+        session_unknown_messages[session_id] = {}
+
+    # Ensure language-specific structure exists within the session
+    if lang_code not in session_unknown_messages[session_id]:
+        session_unknown_messages[session_id][lang_code] = {
+            'unused_messages': UNKNOWN_INTENT_MESSAGES[lang_code].copy(),
+            'unused_support_endings': UNKNOWN_SUPPORT_ENDINGS[lang_code].copy()
         }
 
-    session_data = session_unknown_messages[session_id]
+    session_lang_data = session_unknown_messages[session_id][lang_code]
 
-    # If we've used all messages, reset the pool
-    if not session_data['unused_messages']:
-        session_data['unused_messages'] = UNKNOWN_INTENT_MESSAGES.copy()
+    # If we've used all messages for this language, reset its pool
+    if not session_lang_data['unused_messages']:
+        logging.debug(f"Resetting unused messages for session {session_id}, lang {lang_code}")
+        session_lang_data['unused_messages'] = UNKNOWN_INTENT_MESSAGES[lang_code].copy()
 
-    if not session_data['unused_jokes']:
-        session_data['unused_jokes'] = UNKNOWN_JOKE_ENDINGS.copy()
+    # If we've used all support endings for this language, reset its pool
+    if not session_lang_data['unused_support_endings']:
+        logging.debug(f"Resetting unused support endings for session {session_id}, lang {lang_code}")
+        session_lang_data['unused_support_endings'] = UNKNOWN_SUPPORT_ENDINGS[lang_code].copy()
 
-    # Randomly select from unused messages and jokes
-    selected_message = random.choice(session_data['unused_messages'])
-    selected_joke = random.choice(session_data['unused_jokes'])
+    # Randomly select from unused messages and jokes for the current language
+    selected_message = random.choice(session_lang_data['unused_messages'])
+    selected_support_ending = random.choice(session_lang_data['unused_support_endings'])  # Changed from selected_joke
 
-    # Remove selected items from unused pools
-    session_data['unused_messages'].remove(selected_message)
-    session_data['unused_jokes'].remove(selected_joke)
+    # Remove selected items from unused pools for the current language
+    try:
+        session_lang_data['unused_messages'].remove(selected_message)
+    except ValueError:  # Should not happen if reset logic is correct, but good for safety
+        logging.warning(
+            f"Could not remove selected_message for session {session_id}, lang {lang_code}. Pool might have been reset.")
+        session_lang_data['unused_messages'] = UNKNOWN_INTENT_MESSAGES[lang_code].copy()
+        if selected_message in session_lang_data['unused_messages']:
+            session_lang_data['unused_messages'].remove(selected_message)
 
-    # Add session ID suffix if session exists
-    session_suffix = get_session_id_suffix(session_id)
+    try:
+        session_lang_data['unused_support_endings'].remove(selected_support_ending)
+    except ValueError:
+        logging.warning(
+            f"Could not remove selected_support_ending for session {session_id}, lang {lang_code}. Pool might have been reset.")
+        session_lang_data['unused_support_endings'] = UNKNOWN_SUPPORT_ENDINGS[lang_code].copy()  # Force reset
+        if selected_support_ending in session_lang_data['unused_support_endings']:
+            session_lang_data['unused_support_endings'].remove(selected_support_ending)
 
-    return selected_message + selected_joke + session_suffix
+    # Add session ID suffix if session exists, using the correct language
+    session_suffix = get_session_id_suffix(session_id, lang_code)
+
+    final_message = selected_message + selected_support_ending + session_suffix
+    logging.info(f"Generated unknown message for lang {lang_code}: '{final_message[:100]}...'")
+    return final_message
 
 
 def log_async(fn, *args):
@@ -255,10 +307,16 @@ def resolve_contextual_query(user_input: str, recent_convo: list, session_id: st
                ["what was my last question", "my previous question", "what did I ask before",
                 "tell me my last question"]):
             user_qs = [m['content'] for m in recent_convo if m['role'] == 'user']
-            if len(user_qs) > 1: return {"type": "direct_answer",
-                                         "content": f"Your last question was: \"{user_qs[-2]}\""}
-            return {"type": "direct_answer",
-                    "content": "Hmm, I couldn't find your previous question."}
+            if len(user_qs) > 1:
+                if language == "nl-NL":
+                    return {"type": "direct_answer", "content": f"Je vorige vraag was: \"{user_qs[-2]}\""}
+                else:
+                    return {"type": "direct_answer", "content": f"Your last question was: \"{user_qs[-2]}\""}
+                # For "couldn't find"
+            if language == "nl-NL":
+                return {"type": "direct_answer", "content": "Hmm, ik kon je vorige vraag niet vinden."}
+            else:
+                return {"type": "direct_answer", "content": "Hmm, I couldn't find your previous question."}
         # Last Answer
         if any(fuzz.partial_ratio(lower_user_input, p) > 80 for p in ["your last answer", "what you said before"]):
             for msg in reversed(recent_convo):
@@ -389,21 +447,28 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         return
 
     language_name = "Dutch" if language == "nl-NL" else "English"
-    logging.info(f"--- START HANDLER: Query='{user_input}', Session={session_id}, Lang={language} ---")
+    logging.info(
+        f"--- START HANDLER: Query='{user_input}', Session={session_id}, Lang={language} ({language_name}) ---")
 
-    detected_intent = initial_classify_intent(user_input, language)
-    user_mood = detect_mood(user_input)  # From develop
+    # Make sure initial_classify_intent and resolve_contextual_query are passed the 'language'
+    detected_intent = initial_classify_intent(user_input, language)  # Pass language
+    user_mood = detect_mood(user_input)
     logging.info(f"User mood detected as: {user_mood}")
 
+    # --- Human Support (Internationalize this response too) ---
     if detected_intent == "Human Support Service Request":
         logging.info(f"Handling as: Human Support (Initial)")
-        # Using develop's friendlier canned response
-        reply = ("Of course! You can reach our human support team on WhatsApp at +31 6 12345678 "
-                 "or by email at support@bravur.com.")
-        if session_id: reply += f" When contacting support, please mention your session ID: {session_id}. How can I help in the meantime? 😊"
-        yield reply;
+        if language == "nl-NL":
+            reply = "Natuurlijk! Je kunt ons menselijke supportteam bereiken via WhatsApp op +31 6 12345678 of per e-mail op support@bravur.com."
+            if session_id: reply += f" Vermeld alstublieft uw sessie-ID: {session_id} wanneer u contact opneemt. Hoe kan ik je ondertussen helpen? 😊"
+        else:
+            reply = ("You can reach our human support team on WhatsApp at +31 6 12345678 "
+                     "or by email at support@bravur.com.")
+            if session_id: reply += f" When contacting support, please mention your session ID: {session_id}. How can I help in the meantime? 😊"
+        yield reply
         return
 
+    # --- Contextual Check / Refinement ---
     if detected_intent == "Previous Conversation Query" or \
             (detected_intent == "Unknown" and has_strong_contextual_cues(user_input)):
         logging.info(
@@ -411,13 +476,14 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
         recent_convo_for_context = get_recent_conversation(session_id)
         if recent_convo_for_context or any(
                 fuzz.partial_ratio(user_input.lower(), p) > 80 for p in MEMORY_PROMPTS_KEYWORDS):
+            # Pass language to the context resolver
             context_result = resolve_contextual_query(user_input, recent_convo_for_context, session_id, language)
+            # ... (rest of context_result handling) ...
             logging.info(f"Context resolution result: {context_result}")
             if context_result["type"] == "direct_answer":
                 logging.info(f"Handling as: Direct Answer from Context: '{context_result['content'][:100]}...'")
-                # Apply develop's clipping to direct answers too for consistency
                 yield clean_and_clip_reply(context_result["content"], max_sentences=3, max_chars=350);
-                return  # Slightly more generous for direct answers
+                return
             elif context_result["type"] == "refined_intent":
                 detected_intent = context_result["intent"]
         else:
@@ -427,12 +493,30 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     recent_gratitude_replies = []
 
     if detected_intent == "Gratitude":
-        logging.info("Handling as: Gratitude")
+        logging.info(f"Handling as: Gratitude in {language_name}")
 
-        gratitude_prompt = [
-            {"role": "system", "content": (
+        # --- Language-Specific Prompts and Fallbacks for Gratitude ---
+        if language == "nl-NL":
+            gratitude_system_prompt_content = (
+                "Je bent een vriendelijke en expressieve AI-assistent. Een gebruiker heeft je zojuist bedankt.\n\n"
+                "Antwoord hartelijk en natuurlijk in het Nederlands in 1-2 zinnen. Herhaal NIET elke keer hetzelfde antwoord.\n"
+                "Gebruik verschillende uitdrukkingen zoals:\n"
+                "- Absoluut! Laat het me weten als ik nog iets kan betekenen.\n"
+                "- Altijd! 😊\n"
+                "- Graag gedaan. Ik ben er voor meer vragen als je die hebt.\n"
+                "- Fijn om te helpen! Vraag gerust meer.\n"
+                "- Met alle plezier. Heb je nog meer vragen?\n\n"
+                "Varieer je taalgebruik en toon om menselijk over te komen, niet robotachtig."
+            )
+            gratitude_fallback_responses = [
+                "Graag gedaan! Laat het me weten als ik nog iets kan betekenen. 😊",
+                "Geen dank! Altijd hier om te helpen.",
+                "Altijd! Ik ben er als er meer vragen opkomen."
+            ]
+        else:  # Default to English
+            gratitude_system_prompt_content = (
                 "You are a friendly and expressive AI assistant. A user has just said thank you.\n\n"
-                "Reply warmly and naturally in 1–2 sentences. Do NOT repeat the same reply every time.\n"
+                "Reply warmly and naturally in English in 1–2 sentences. Do NOT repeat the same reply every time.\n"
                 "Use different expressions like:\n"
                 "- Absolutely! Let me know if I can help with anything else.\n"
                 "- Anytime! 😊\n"
@@ -440,56 +524,77 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
                 "- Happy to help! Feel free to ask more.\n"
                 "- Always a pleasure. Got more questions?\n\n"
                 "Vary your language and tone to feel human, not robotic. Avoid repeating the same response in this conversation."
-            )},
+            )
+            gratitude_fallback_responses = [
+                "Sure thing! Let me know if I can help with anything else. 😊",
+                "You're welcome! Always here to help.",
+                "Anytime! I'm here if more questions come up."
+            ]
+
+        gratitude_prompt_messages = [
+            {"role": "system", "content": gratitude_system_prompt_content},
             {"role": "user", "content": user_input}
         ]
 
+        # Session-based tracking for gratitude replies per language
+        session_key = f"{session_id or 'default'}_{language}"  # Use 'default' if session_id is None
+        if session_key not in session_unknown_messages:
+            session_unknown_messages[session_key] = {'recent_gratitude_replies': []}
+        elif 'recent_gratitude_replies' not in session_unknown_messages[session_key]:
+            session_unknown_messages[session_key]['recent_gratitude_replies'] = []
+
+        recent_gratitude_replies_for_lang = session_unknown_messages[session_key]['recent_gratitude_replies']
+
         try:
             reply = None
-            MAX_TRIES = 6
+            MAX_TRIES = 5  # Try a few times to get a unique response
 
             for _ in range(MAX_TRIES):
                 completion = groq_client.chat.completions.create(
-                    messages=gratitude_prompt,
-                    model="llama-3.3-70b-versatile",
-                    temperature=random.uniform(0.85, 1.0),
+                    messages=gratitude_prompt_messages,
+                    model="llama-3.3-70b-versatile",  # Smaller, faster model is fine for this
+                    temperature=random.uniform(0.75, 0.95),  # Encourage more variety
                     max_tokens=60
                 )
                 candidate = completion.choices[0].message.content.strip()
 
-                if candidate not in recent_gratitude_replies:
+                # Simple check for variety
+                if candidate and candidate not in recent_gratitude_replies_for_lang:
                     reply = candidate
-                    recent_gratitude_replies.append(reply)
-                    if len(recent_gratitude_replies) > 20:
-                        recent_gratitude_replies.pop(0)
+                    recent_gratitude_replies_for_lang.append(reply)
+                    if len(recent_gratitude_replies_for_lang) > 10:  # Keep memory of last 10
+                        recent_gratitude_replies_for_lang.pop(0)
                     break
 
-            if not reply:
-                fallback_responses = [
-                    "Sure thing! Let me know if I can help with anything else. 😊",
-                    "You're welcome! Always here to help.",
-                    "Anytime! I'm here if more questions come up."
-                ]
-                reply = random.choice(fallback_responses)
+            if not reply:  # Fallback if LLM struggles or repeats too much
+                reply = random.choice(gratitude_fallback_responses)
 
+            logging.info(f"Gratitude response in {language_name}: {reply}")
             yield reply
             return
 
         except Exception as e:
             logging.error(f"LLM Gratitude Generation Error: {e}")
-            yield "You're welcome! 😊 Let me know if I can assist you with anything else."
+            yield random.choice(gratitude_fallback_responses)  # Fallback on error
             return
 
     if detected_intent == "Positive Acknowledgment":
-        logging.info("Handling as: Positive Acknowledgment")
-        reply = "Glad you liked that! 😊 Let me know if you have more questions."
+        logging.info(f"Handling as: Positive Acknowledgment in {language_name}")
+        if language == "nl-NL":
+            reply = "Fijn dat je dat goed vond! 😊 Laat het me weten als je meer vragen hebt."
+        else: # Default to English
+            reply = "Glad you liked that! 😊 Let me know if you have more questions."
         yield reply
         return
 
     if detected_intent == "Frustration":
-        logging.info("Handling as: Frustration")
-        reply = ("I'm sorry that wasn't helpful. 😔 I'm here to assist you — could you tell me more "
-                 "so I can improve the answer or connect you with support?")
+        logging.info(f"Handling as: Frustration in {language_name}")
+        if language == "nl-NL":
+            reply = ("Het spijt me dat dat niet hielp. 😔 Ik ben hier om je te helpen — kun je me meer vertellen "
+                     "zodat ik het antwoord kan verbeteren of je kan doorverbinden met support?")
+        else: # Default to English
+            reply = ("I'm sorry that wasn't helpful. 😔 I'm here to assist you — could you tell me more "
+                     "so I can improve the answer or connect you with support?")
         yield reply
         return
 
@@ -498,7 +603,7 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     if detected_intent == "Unknown":
         logging.info(f"Handling as: Unknown (Final)")
         # Using randomized unknown messages with jokes
-        random_message = get_random_unknown_message(session_id or "default")
+        random_message = get_random_unknown_message(session_id or "default", language)
         yield random_message
         return
 
@@ -514,21 +619,77 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     # --- Final Response Generation ---
     final_response_chunks = []
     if detected_intent == "IT Trends":
-        logging.info(f"Handling as: IT Trends (Final)")
-        sys_prompt = (f"You are a knowledgeable AI assistant for Bravur. {tone_instruction}"
-                      f"Provide somewhat concise (max 4-5 sentences) and clear insights on IT services and general technology trends. "
-                      f"Respond in {language_name}. Add one relevant emoji to make the reply engaging. 💡")
-        messages = [{"role": "system", "content": sys_prompt}] + recent_convo_for_response + [
-            {"role": "user", "content": user_input}]
+        logging.info(f"Handling as: IT Trends (SerperAPI) for query: '{user_input}'")
+        yield "Searching the web for the latest IT trends... 🌐\n"
+
+        site_constraints_list = []
+        user_input_lower = user_input.lower()
+        if "mckinsey" in user_input_lower:
+            site_constraints_list.append("site:mckinsey.com")
+        if "gartner" in user_input_lower:
+            site_constraints_list.append("site:gartner.com")
+
+        site_constraint_query_str = " OR ".join(site_constraints_list) if site_constraints_list else None
+
+        search_data = search_web(user_input, site_constraint=site_constraint_query_str)
+
+        search_snippets = []
+        if search_data.get("error"):
+            logging.warning(f"SerperAPI search returned an error: {search_data['error']}")
+        elif "organic" in search_data and search_data["organic"]:
+            results = search_data["organic"][:5]  # Process top 5 relevant results
+            for r_item in results:
+                title = r_item.get('title', 'N/A')
+                link = r_item.get('link', 'N/A')
+                snippet_text = r_item.get('snippet', 'N/A')
+                if title and link and snippet_text:  # Ensure essential parts are present
+                    search_snippets.append(f"Title: {title}\nLink: {link}\nSnippet: {snippet_text}")
+        else:
+            logging.info(f"No organic results from SerperAPI search for '{user_input}'.")
+
+        if search_snippets:
+            search_context_str = "\n\n---\n\n".join(search_snippets)
+            it_trends_sys_prompt = (
+                f"You are a helpful AI assistant for Bravur. {tone_instruction} "
+                f"The user asked about IT trends: '{user_input}'. "
+                f"Below are web search results. Summarize the key information and insights related to the query. "
+                f"If results from McKinsey or Gartner are present and relevant, prioritize them. "
+                f"Provide a concise answer (target 3-5 sentences, but can be longer if summarizing multiple rich sources). Respond in {language_name}. "
+                f"Cite relevant source links (e.g., [Source: URL]) if you use specific information from them. Avoid just listing links. "
+                f"Add one relevant emoji. 🔍\n\n"
+                f"Web Search Results:\n{search_context_str}"
+            )
+        else:  # No useful search results or search failed
+            # Give feedback about search failure before general knowledge answer
+            yield "I couldn't find specific details from a web search for that IT trend. I'll provide a general overview based on my knowledge.\n"
+            it_trends_sys_prompt = (
+                f"You are a knowledgeable AI assistant for Bravur. {tone_instruction} "
+                f"A web search for '{user_input}' did not return specific results. "
+                f"Please provide a general overview (max 4-5 sentences) on this IT trend based on your existing knowledge. "
+                f"If you have general knowledge about reports from sources like McKinsey or Gartner on this topic, you can mention them. "
+                f"Respond in {language_name}. Add one relevant emoji to make the reply engaging. 💡"
+            )
+
+        messages_for_llm = [{"role": "system", "content": it_trends_sys_prompt}] + \
+                           recent_convo_for_response + \
+                           [{"role": "user", "content": user_input}]
+
         try:
-            # Using Groq Llama 3 70B for better quality IT Trend answers
-            stream = groq_client.chat.completions.create(model="llama-3.3-70b-versatile", messages=messages,
-                                                         max_tokens=300, temperature=0.6, stream=True)
-            for chunk in stream:
-                if chunk.choices[0].delta.content: final_response_chunks.append(chunk.choices[0].delta.content); yield \
-                    chunk.choices[0].delta.content
+            logging.info(
+                f"Using Groq Llama 3 70B for IT Trend (Serper/Fallback) response generation. System prompt starts with: {it_trends_sys_prompt[:200]}...")
+            stream = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages_for_llm,
+                max_tokens=450,
+                temperature=0.5,
+                stream=True
+            )
+            for chunk_obj in stream:
+                if chunk_obj.choices[0].delta.content:
+                    final_response_chunks.append(chunk_obj.choices[0].delta.content)
+                    yield chunk_obj.choices[0].delta.content
         except Exception as e:
-            logging.error(f"LLM Error (IT Trends): {e}");
+            logging.error(f"LLM Error (IT Trends with Serper/Fallback): {e}")
             yield "[Error generating IT trends response]"
 
     elif detected_intent == "Company Info":  # Also catches refined "Previous Conversation Query" that became Company Info
@@ -574,8 +735,10 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
             yield "[Error generating RAG response]"
     else:  # Fallback if intent is somehow not covered
         logging.warning(f"Fell through main intent handling for '{detected_intent}'. Query: '{user_input}'")
-        yield f"I'm a bit unsure how to help with that. I can discuss Bravur or general IT topics in {language_name}.";
-        return
+        if language == "nl-NL":
+            yield f"Ik weet niet zeker hoe ik daarmee kan helpen. Ik kan Bravur of algemene IT-onderwerpen in het {language_name} bespreken."
+        else:
+            yield f"I'm a bit unsure how to help with that. I can discuss Bravur or general IT topics in {language_name}."
 
     # After stream is complete for IT Trends or Company Info/RAG
     if final_response_chunks:
