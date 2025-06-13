@@ -15,44 +15,18 @@ from app.rate_limiter import (
     get_session_rate_status, mark_captcha_solved,
     get_fingerprint_rate_status, mark_captcha_solved_fingerprint
 )
-import base64
-from app.database import create_chat_session, store_message
-from app.rate_limiter import (
-    check_session_rate_limit, check_ip_rate_limit,
-    get_session_rate_status, mark_captcha_solved,
-    get_fingerprint_rate_status, mark_captcha_solved_fingerprint
-)
+from app.utils import get_client_ip
 
 # API ROUTES under /api/v1
 routes = Blueprint("routes", __name__, url_prefix="/api/v1")
 
-def get_client_ip():
-    x_forwarded_for = request.headers.get('X-Forwarded-For')
-    if x_forwarded_for:
-        return x_forwarded_for.split(',')[0].strip()
-    return request.remote_addr
-
-# helper to get client IP, considering proxies
-def get_client_ip():
-    """
-    Retrieves the client's IP address, checking for X-Forwarded-For header
-    if the application is behind a proxy.
-    """
-    # Check for X-Forwarded-For header, which is common when behind a proxy/load balancer
-    # If multiple IPs are present (comma-separated), the first one is typically the client's IP.
-    x_forwarded_for = request.headers.get('X-Forwarded-For')
-    if x_forwarded_for:
-        return x_forwarded_for.split(',')[0].strip()
-    return request.remote_addr
-
 @routes.route("/chat", methods=["POST"])
 def chat():
-    """Modified to handle WordPress requests"""
-
-    user_input = request.json.get("input", "")
-    if len(user_input) >= 1000 or len(user_input.split()) >= 150:
-        return jsonify({"error": "Input too long. Max 150 words or 1000 characters."}), 400
-
+    """Handle chat requests with input validation"""
+    if request.content_type and 'application/json' in request.content_type:
+        user_input = request.json.get("input", "")
+        if len(user_input) >= 1000 or len(user_input.split()) >= 150:
+            return jsonify({"error": "Input too long. Max 150 words or 1000 characters."}), 400
     return handle_chat()
 
 @routes.route("/feedback", methods=["POST"])
