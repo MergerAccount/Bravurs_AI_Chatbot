@@ -85,14 +85,18 @@ UNKNOWN_SUPPORT_ENDINGS = {
 
 # Session ID suffix for human support jokes
 def get_session_id_suffix(session_id: str, language: str = "en-US") -> str:
-    """Generate session ID mention for human support contact in the correct language."""
+    """Generate session ID mention for human support contact in the correct language, truncated to first 6 characters."""
     if not session_id or session_id == "default":
         return ""
 
+    # Truncate the session ID to the first 6 characters for display
+    # This provides a short, easily copyable identifier for the user.
+    displayed_session_id = session_id[:6]
+
     if language == "nl-NL":
-        return f" Vermeld alstublieft uw sessie-ID: {session_id} wanneer u contact opneemt."
+        return f" Vermeld alstublieft uw sessie-ID: {displayed_session_id} wanneer u contact opneemt."
     else:
-        return f" Please mention your session ID: {session_id} when contacting them."
+        return f" Please mention your session ID: {displayed_session_id} when contacting them."
 
 
 def get_random_unknown_message(session_id: str, language: str = "en-US") -> str:  # Added language parameter
