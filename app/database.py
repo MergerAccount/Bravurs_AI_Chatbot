@@ -1,8 +1,10 @@
+# app/database.py (UPDATED CONTENT)
 import psycopg2
 import logging
 from datetime import datetime, timedelta, timezone
 from app.config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, OPENAI_API_KEY
 from openai import OpenAI
+import secrets
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -60,17 +62,20 @@ def create_chat_session():
         now = datetime.now()
         print(f"DEBUG: About to insert session with timestamp: {now}")
 
-        # Insert session WITHOUT is_active column (matches your actual database)
+        # Generate a unique, random string as session_id
+        # Using secrets.token_urlsafe for a robust, URL-safe random string
+        session_id = secrets.token_urlsafe(16)
+
+        # Insert session with the generated session_id
         cursor.execute(
             """
-            INSERT INTO chat_session (timestamp, voice_enabled, duration_minutes) 
-            VALUES (%s, %s, %s) 
+            INSERT INTO chat_session (session_id, timestamp, voice_enabled, duration_minutes, is_active) 
+            VALUES (%s, %s, %s, %s, %s) 
             RETURNING session_id
             """,
-            (now, False, 0)
+            (session_id, now, False, 0, True) # Explicitly set is_active
         )
 
-        session_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
         conn.close()
@@ -78,7 +83,7 @@ def create_chat_session():
         print(f"DEBUG: Successfully created session_id: {session_id}")
         logging.info(f"Created new chat session: {session_id}")
 
-        # Initialize Redis limit
+        # Initialize Redis limit (session_id is treated as a string key by Redis, so this is fine)
         from app.rate_limiter import r, SESSION_MAX_REQUESTS
         meta_key = f"rate_limit:meta:{session_id}"
         if not r.hexists(meta_key, "limit"):
@@ -101,11 +106,6 @@ def store_message(session_id, content, message_type="user"):
         logging.error("No session ID")
         return False
 
-    try:
-        session_id = int(session_id)
-    except (ValueError, TypeError):
-        logging.error(f"Invalid session ID: {session_id}")
-        return False
 
     conn = get_db_connection()
     if conn is None:
@@ -140,11 +140,6 @@ def get_session_messages(session_id):
     if not session_id or session_id == "None" or session_id == "null":
         return []
 
-    try:
-        session_id = int(session_id)
-    except (ValueError, TypeError):
-        logging.error(f"Invalid session ID: {session_id}")
-        return []
 
     conn = get_db_connection()
     if conn is None:
@@ -360,4 +355,3 @@ def is_session_valid(session_id):
     if is_session_expired(session_id):
         return False
     return is_session_active(session_id)
-

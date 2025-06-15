@@ -1,5 +1,3 @@
-# app/controllers/chat_controller.py
-
 from flask import request, jsonify, Response, stream_with_context
 import logging
 from typing import Tuple, Dict, Any, Generator, Optional, Union
@@ -16,17 +14,18 @@ from app.utils import get_client_ip
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 def handle_chat() -> Tuple[Dict[str, Any], int]:
     """
     Handle chat requests from both existing frontend and WordPress.
-    
+
     Supports:
     - JSON requests (API)
     - Form data requests (WordPress)
     - Streaming responses (frontend)
     - Rate limiting with fingerprint/session/IP tracking
     - CAPTCHA verification
-    
+
     Returns:
         Tuple[Dict[str, Any], int]: Response data and HTTP status code
     """
@@ -36,7 +35,7 @@ def handle_chat() -> Tuple[Dict[str, Any], int]:
     logger.debug(f"Method: {request.method}")
     logger.debug(f"Form data: {dict(request.form)}")
     logger.debug(f"Headers: {dict(request.headers)}")
-    
+
     try:
         json_data = request.get_json(silent=True)
         logger.debug(f"JSON data: {json_data}")
@@ -46,7 +45,7 @@ def handle_chat() -> Tuple[Dict[str, Any], int]:
 
     # Extract request data
     user_input, session_id, fingerprint, language, request_type = _extract_request_data(json_data)
-    
+
     # Validate user input
     if not user_input:
         error_response = "Message is required" if request_type == "wordpress" else "User input is required"
@@ -77,13 +76,14 @@ def handle_chat() -> Tuple[Dict[str, Any], int]:
         return handle_wordpress_chat(user_input, session_id, language)
     return handle_streaming_chat(user_input, session_id, language)
 
+
 def _extract_request_data(json_data: Optional[Dict]) -> Tuple[str, str, str, str, str]:
     """
     Extract and validate request data from different sources.
-    
+
     Args:
         json_data: Optional JSON data from request
-        
+
     Returns:
         Tuple containing (user_input, session_id, fingerprint, language, request_type)
     """
@@ -114,27 +114,23 @@ def _extract_request_data(json_data: Optional[Dict]) -> Tuple[str, str, str, str
 
     return user_input, session_id, fingerprint, language, request_type
 
-def _handle_session(session_id: Optional[str]) -> Union[int, Tuple[Dict[str, Any], int]]:
+
+def _handle_session(session_id: Optional[str]) -> Union[
+    str, Tuple[Dict[str, Any], int]]:  # <--- UPDATED TYPE HINT for session_id
     """
     Handle session creation and validation.
-    
+
     Args:
         session_id: Optional session ID from request
-        
+
     Returns:
-        Either validated session ID (int) or error response tuple
+        Either validated session ID (str) or error response tuple
     """
     if not session_id or session_id in ("None", "null"):
         session_id = create_chat_session()
         if not session_id:
             return jsonify({"error": "Sorry, I'm having trouble with your session. Please try again."}), 500
 
-    try:
-        session_id = int(session_id)
-    except (ValueError, TypeError):
-        session_id = create_chat_session()
-        if not session_id:
-            return jsonify({"error": "Sorry, I'm having trouble with your session. Please try again."}), 500
 
     if not is_session_active(session_id):
         logger.warning(f"Attempted to use inactive session: {session_id}")
@@ -146,14 +142,16 @@ def _handle_session(session_id: Optional[str]) -> Union[int, Tuple[Dict[str, Any
 
     return session_id
 
-def _check_rate_limits(session_id: int, fingerprint: Optional[str]) -> Optional[Tuple[Dict[str, Any], int]]:
+
+def _check_rate_limits(session_id: str, fingerprint: Optional[str]) -> Optional[
+    Tuple[Dict[str, Any], int]]:  # <--- UPDATED TYPE HINT for session_id
     """
     Check rate limits for the request.
-    
+
     Args:
         session_id: Validated session ID
         fingerprint: Optional client fingerprint
-        
+
     Returns:
         None if rate limits pass, or error response tuple if limits exceeded
     """
@@ -200,15 +198,17 @@ def _check_rate_limits(session_id: int, fingerprint: Optional[str]) -> Optional[
 
     return None
 
-def handle_wordpress_chat(user_input: str, session_id: int, language: str) -> Tuple[Dict[str, Any], int]:
+
+def handle_wordpress_chat(user_input: str, session_id: str, language: str) -> Tuple[
+    Dict[str, Any], int]:  # <--- UPDATED TYPE HINT for session_id
     """
     Handle WordPress chat requests with complete JSON response.
-    
+
     Args:
         user_input: User's message
         session_id: Validated session ID
         language: Requested language code
-        
+
     Returns:
         Tuple containing response data and HTTP status code
     """
@@ -217,10 +217,10 @@ def handle_wordpress_chat(user_input: str, session_id: int, language: str) -> Tu
         full_reply = ""
         for chunk in company_info_handler_streaming(user_input, session_id, language):
             full_reply += chunk
-            
+
         if full_reply.strip():
             store_message(session_id, full_reply.strip(), "bot")
-            
+
         logger.debug(f"WordPress chat response: {full_reply[:100]}...")
         return jsonify({
             "response": full_reply.strip() or "Sorry, I couldn't generate a response.",
@@ -232,18 +232,21 @@ def handle_wordpress_chat(user_input: str, session_id: int, language: str) -> Tu
         logger.error(f"Error in WordPress chat: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
-def handle_streaming_chat(user_input: str, session_id: int, language: str) -> Response:
+
+def handle_streaming_chat(user_input: str, session_id: str,
+                          language: str) -> Response:  # <--- UPDATED TYPE HINT for session_id
     """
     Handle streaming chat requests for the frontend.
-    
+
     Args:
         user_input: User's message
         session_id: Validated session ID
         language: Requested language code
-        
+
     Returns:
         Flask Response object with streaming content
     """
+
     def generate() -> Generator[str, None, None]:
         full_reply = ""
         try:

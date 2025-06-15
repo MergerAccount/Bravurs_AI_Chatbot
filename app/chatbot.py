@@ -85,14 +85,18 @@ UNKNOWN_SUPPORT_ENDINGS = {
 
 # Session ID suffix for human support jokes
 def get_session_id_suffix(session_id: str, language: str = "en-US") -> str:
-    """Generate session ID mention for human support contact in the correct language."""
+    """Generate session ID mention for human support contact in the correct language, truncated to first 6 characters."""
     if not session_id or session_id == "default":
         return ""
 
+    # Truncate the session ID to the first 6 characters for display
+    # This provides a short, easily copyable identifier for the user.
+    displayed_session_id = session_id[:6]
+
     if language == "nl-NL":
-        return f" Vermeld alstublieft uw sessie-ID: {session_id} wanneer u contact opneemt."
+        return f" Vermeld alstublieft uw sessie-ID: {displayed_session_id} wanneer u contact opneemt."
     else:
-        return f" Please mention your session ID: {session_id} when contacting them."
+        return f" Please mention your session ID: {displayed_session_id} when contacting them."
 
 
 def get_random_unknown_message(session_id: str, language: str = "en-US") -> str:  # Added language parameter
@@ -458,13 +462,15 @@ def company_info_handler_streaming(user_input: str, session_id: str = None, lang
     # --- Human Support (Internationalize this response too) ---
     if detected_intent == "Human Support Service Request":
         logging.info(f"Handling as: Human Support (Initial)")
+        truncated_session_suffix = get_session_id_suffix(session_id, language)
+
         if language == "nl-NL":
             reply = "Natuurlijk! Je kunt ons menselijke supportteam bereiken via WhatsApp op +31 6 12345678 of per e-mail op support@bravur.com."
-            if session_id: reply += f" Vermeld alstublieft uw sessie-ID: {session_id} wanneer u contact opneemt. Hoe kan ik je ondertussen helpen? 😊"
+            reply += f"{truncated_session_suffix} Hoe kan ik je ondertussen helpen? 😊"
         else:
             reply = ("You can reach our human support team on WhatsApp at +31 6 12345678 "
                      "or by email at support@bravur.com.")
-            if session_id: reply += f" When contacting support, please mention your session ID: {session_id}. How can I help in the meantime? 😊"
+            reply += f"{truncated_session_suffix} How can I help in the meantime? 😊"
         yield reply
         return
 
