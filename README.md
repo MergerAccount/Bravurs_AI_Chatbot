@@ -1,57 +1,88 @@
-# Instructions for Bravur's AI Chatbot 
+# 🧠 Bravur's AI Chatbot – Backend
 
-## Prerequisites:
-- PyCharm Installed or Install Python
-- Node.js installed (for Husky and CommitLint)
+This is the backend for Bravur's AI Chatbot, a Python-based API that connects with a WordPress plugin frontend. It handles all the logic and data processing for the chatbot.
 
-## Clone the repository:
+---
+
+## ✅ Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- [Python 3.x](https://www.python.org/downloads/)
+- [PyCharm (optional)](https://www.jetbrains.com/pycharm/) – or any Python IDE
+- [Node.js](https://nodejs.org/) – required for Git hooks via Husky and CommitLint
+
+---
+
+## 📥 Clone the Repository
 ```bash
-git clone https://github.com/SaraBubanova/Bravurs_AI_Chatbot.git
+git clone https://github.com/MergerAccount/Bravurs_AI_Chatbot.git
 cd Bravurs_AI_Chatbot
 ```
 
-## Drag .env file into root directory (on Teams, deliverables folder)
-This project requires a `.env` file containing necessary API keys and database connection details.
 
-*   **Locate the `.env` file:** Please find this file in the shared location provided by the team (e.g., check the 'Deliverables' folder on Microsoft Teams or ask a team lead).
-*   **Place the file:** Copy or move the `.env` file directly into the root `Bravurs_AI_Chatbot` directory (this is the folder you cloned in Step 1 and then used `cd` to enter).
+## 🔐 Add the .env File
 
-## Create a virtual environment
+This project uses environment variables to store sensitive information like API keys and database connection details.
+
+Locate the file:
+The .env file is available in the shared deliverables folder on Microsoft Teams. Ask the team leader if you can’t find it.
+
+Copy it to your project root:
+Drag and drop the .env file into the root of the cloned Bravurs_AI_Chatbot directory — the same folder you ran the cd command in above.
+
+```bash
+📁 Bravurs_AI_Chatbot/
+├── .env            ← You'll need to add this
+├── venv/
+├── requirements.txt
+└── ...
+```
+
+⚠️ The .env file is not tracked in Git, so each developer must add it manually.
+
+
+## 🐍 Create and Activate a Virtual Environment
+
+### Step 1
+
 ```bash
 python -m venv venv
 ```
-Or a PyCharm asks you to create an interpreter using the requirements.txt file (Click Yes)
 
-# Activate the virtual environment
-# On Windows:
+Or: If PyCharm prompts you to create an interpreter using requirements.txt, click Yes.
+
+### Step 2
+
+
+On Windows:
 ```bash
 venv\Scripts\activate
 ```
-# On macOS/Linux:
+
+On macOS/Linux:
 ```bash
 source venv/bin/activate
 ```
 
-## Install dependencies
-```bash
+
+### Install Python Dependencis
+
+```bash 
 pip install -r requirements.txt
 ```
 
-## Install Git commit hooks (Husky + CommitLint)
-This project uses Husky to enforce proper commit messages.
+This will install Husky and configure the Git hooks automatically.
 
-Run the following command in the project root:
-```bash
-npm install
-```
-This will automatically install Husky and set up CommitLint hooks.
+# ▶️Run the App
 
-## Run the App
 ```bash
 python run.py
 ```
 
+# 🧪 Testing 
+You can test the backend independently by visiting an endpoint in the browser or using tools like Postman or curl:
 
-
-
-
+```bash
+curl http://localhost:5001/api/v1
+```
