@@ -170,16 +170,78 @@ def text_to_speech_api():
 
     return Response(generate(), mimetype="audio/wav")
 
+# @routes.route("/stt", methods=["POST"])
+# def speech_to_text_api():
+#     """Speech-to-text endpoint for WordPress voice input"""
+#     from app.speech import speech_to_text
+#
+#     data = request.get_json() or {}
+#     language = data.get("language")
+#
+#     result = speech_to_text(language)
+#     return jsonify(result)
+
+
 @routes.route("/stt", methods=["POST"])
 def speech_to_text_api():
     """Speech-to-text endpoint for WordPress voice input"""
-    from app.speech import speech_to_text
+    try:
+        # Debug logging
+        print(f"STT request received")
+        print(f"Content-Type: {request.content_type}")
+        print(f"Form data: {dict(request.form)}")
+        print(f"Files: {list(request.files.keys())}")
 
-    data = request.get_json() or {}
-    language = data.get("language")
+        # Get language from form data (like in STS endpoint)
+        language = request.form.get('language', 'en-US')
+        session_id = request.form.get('session_id')
 
-    result = speech_to_text(language)
-    return jsonify(result)
+        print(f"STT - Language: {language}, Session ID: {session_id}")
+
+        # Check if we have an audio file
+        if 'audio' not in request.files:
+            return jsonify({
+                "status": "error",
+                "message": "No audio file provided"
+            }), 400
+
+        # Use the same speech_to_text function that your STS uses
+        # but just return the transcribed text instead of doing TTS
+        from app.speech import speech_to_text
+
+        # Call speech_to_text with the language parameter
+        # You might need to modify this based on how your speech_to_text function works
+        result = speech_to_text(language=language)
+
+        print(f"STT result: {result}")
+
+        # Return just the transcribed text
+        if result and isinstance(result, dict) and result.get("original_text"):
+            return jsonify({
+                "status": "success",
+                "text": result["original_text"],
+                "message": "Speech recognized successfully"
+            })
+        elif result and isinstance(result, str):
+            return jsonify({
+                "status": "success",
+                "text": result,
+                "message": "Speech recognized successfully"
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "No speech detected or recognition failed"
+            }), 400
+
+    except Exception as e:
+        print(f"Error in STT endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": f"Internal server error: {str(e)}"
+        }), 500
 
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
