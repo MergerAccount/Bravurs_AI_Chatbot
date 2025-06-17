@@ -345,66 +345,66 @@ def is_first_bot_response_in_session(session_id):
         return True
 
 
-def speech_to_speech(language=None, session_id=None):
-    stt_result = speech_to_text(language=language)
-
-    if stt_result["status"] != "success" or not stt_result["text"]:
-        print("No valid speech input detected")
-        return {
-            "error": "No valid speech input detected. Please check your microphone and try speaking again.",
-            "session_id": session_id,
-            "debug_info": stt_result
-        }
-
-    user_text = stt_result["text"]
-    print(f"Recognized text: {user_text}")
-
-    # Step 2: Determine response language
-    response_language = language if language else stt_result["language"]
-    print(f"Using response language: {response_language}")
-
-    # Step 3: Validate and ensure we have a session_id
-    if not session_id:
-        return {
-            "error": "No session ID provided",
-            "session_id": None
-        }
-
-    # Step 4: Store the user message in the database
-    user_message_id = store_message(session_id, user_text, "user")
-
-    # Step 5: Check if this is the first bot response BEFORE getting the response
-    is_first_interaction = is_first_bot_response_in_session(session_id)
-    print(f"Is first bot interaction in session: {is_first_interaction}")
-
-    # Step 6: Get the chatbot response
-    response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
-    print(f"Got response text: {response_text[:50]}...")
-
-    # Step 7: Add intro joke only if this is the first bot response in this session
-    final_response_text = response_text
-    if is_first_interaction:
-        if response_language == "nl-NL":
-            intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. Maar om je vraag te beantwoorden: "
-        else:
-            intro = "Please go easy on my voice, I'm just an AI. But to answer your question: "
-        final_response_text = intro + response_text
-
-    # Step 8: Store the bot response in the database
-    bot_message_id = store_message(session_id, final_response_text, "bot")
-
-    # Step 9: Convert response to speech
-    tts_output_path = text_to_speech(final_response_text, language=response_language)
-
-    # Step 10: Return complete result
-    return {
-        "audio_path": tts_output_path,
-        "original_text": user_text,
-        "response_text": final_response_text,
-        "language": response_language,
-        "session_id": session_id,
-        "is_first_interaction": is_first_interaction
-    }
+# def speech_to_speech(language=None, session_id=None):
+#     stt_result = speech_to_text(language=language)
+#
+#     if stt_result["status"] != "success" or not stt_result["text"]:
+#         print("No valid speech input detected")
+#         return {
+#             "error": "No valid speech input detected. Please check your microphone and try speaking again.",
+#             "session_id": session_id,
+#             "debug_info": stt_result
+#         }
+#
+#     user_text = stt_result["text"]
+#     print(f"Recognized text: {user_text}")
+#
+#     # Step 2: Determine response language
+#     response_language = language if language else stt_result["language"]
+#     print(f"Using response language: {response_language}")
+#
+#     # Step 3: Validate and ensure we have a session_id
+#     if not session_id:
+#         return {
+#             "error": "No session ID provided",
+#             "session_id": None
+#         }
+#
+#     # Step 4: Store the user message in the database
+#     user_message_id = store_message(session_id, user_text, "user")
+#
+#     # Step 5: Check if this is the first bot response BEFORE getting the response
+#     is_first_interaction = is_first_bot_response_in_session(session_id)
+#     print(f"Is first bot interaction in session: {is_first_interaction}")
+#
+#     # Step 6: Get the chatbot response
+#     response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
+#     print(f"Got response text: {response_text[:50]}...")
+#
+#     # Step 7: Add intro joke only if this is the first bot response in this session
+#     final_response_text = response_text
+#     if is_first_interaction:
+#         if response_language == "nl-NL":
+#             intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. Maar om je vraag te beantwoorden: "
+#         else:
+#             intro = "Please go easy on my voice, I'm just an AI. But to answer your question: "
+#         final_response_text = intro + response_text
+#
+#     # Step 8: Store the bot response in the database
+#     bot_message_id = store_message(session_id, final_response_text, "bot")
+#
+#     # Step 9: Convert response to speech
+#     tts_output_path = text_to_speech(final_response_text, language=response_language)
+#
+#     # Step 10: Return complete result
+#     return {
+#         "audio_path": tts_output_path,
+#         "original_text": user_text,
+#         "response_text": final_response_text,
+#         "language": response_language,
+#         "session_id": session_id,
+#         "is_first_interaction": is_first_interaction
+#     }
 
 
 def save_audio_file(audio_data):
