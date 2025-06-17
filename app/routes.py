@@ -185,6 +185,9 @@ def text_to_speech_api():
 @routes.route("/stt", methods=["POST"])
 def speech_to_text_api():
     """Speech-to-text endpoint for WordPress voice input"""
+    import tempfile
+    import os
+
     try:
         # Debug logging
         print(f"STT request received")
@@ -192,46 +195,71 @@ def speech_to_text_api():
         print(f"Form data: {dict(request.form)}")
         print(f"Files: {list(request.files.keys())}")
 
-        # Get language from form data (like in STS endpoint)
-        language = request.form.get('language', 'en-US')
+        # Get language from form data
+        language = request.form.get('language', 'nl-NL')
         session_id = request.form.get('session_id')
 
         print(f"STT - Language: {language}, Session ID: {session_id}")
 
         # Check if we have an audio file
         if 'audio' not in request.files:
+            print("No audio file in request")
             return jsonify({
                 "status": "error",
                 "message": "No audio file provided"
             }), 400
 
-        # Use the same speech_to_text function that your STS uses
-        # but just return the transcribed text instead of doing TTS
+        audio_file = request.files['audio']
+        if audio_file.filename == '':
+            print("Empty audio filename")
+            return jsonify({
+                "status": "error",
+                "message": "No audio file selected"
+            }), 400
+
+        print(f"Audio file received: {audio_file.filename}")
+
+        # Save the uploaded audio file temporarily
+        # Azure Speech SDK supports various formats, but let's try to keep original format
+        file_extension = '.webm'  # Default, but try to detect from filename
+        if '.' in audio_file.filename:
+            file_extension = '.' + audio_file.filename.rsplit('.', 1)[1].lower()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            audio_file.save(temp_file.name)
+            temp_audio_path = temp_file.name
+
+        print(f"Audio saved to: {temp_audio_path}")
+
+        # Import the speech_to_text function
         from app.speech import speech_to_text
 
-        # Call speech_to_text with the language parameter
-        # You might need to modify this based on how your speech_to_text function works
-        result = speech_to_text(language=language)
+        # Call speech_to_text with the audio file path
+        result = speech_to_text(language=language, audio_file_path=temp_audio_path)
 
         print(f"STT result: {result}")
 
-        # Return just the transcribed text
-        if result and isinstance(result, dict) and result.get("original_text"):
+        # Clean up temporary file
+        try:
+            os.remove(temp_audio_path)
+            print(f"Cleaned up temp file: {temp_audio_path}")
+        except Exception as e:
+            print(f"Error removing temp file: {e}")
+
+        # Return the result in the format WordPress expects
+        if result and result.get("status") == "success" and result.get("text"):
             return jsonify({
                 "status": "success",
-                "text": result["original_text"],
-                "message": "Speech recognized successfully"
-            })
-        elif result and isinstance(result, str):
-            return jsonify({
-                "status": "success",
-                "text": result,
+                "text": result["text"],
+                "language": result.get("language", language),
                 "message": "Speech recognized successfully"
             })
         else:
+            error_message = result.get("message",
+                                       "Speech recognition failed") if result else "Speech recognition failed"
             return jsonify({
                 "status": "error",
-                "message": "No speech detected or recognition failed"
+                "message": error_message
             }), 400
 
     except Exception as e:
