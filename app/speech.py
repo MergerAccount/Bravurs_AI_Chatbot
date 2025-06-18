@@ -369,11 +369,12 @@ def speech_to_speech(language=None, session_id=None):
 
 
 def save_audio_file(audio_data):
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+    # Use a directory that is guaranteed to be writable on Azure App Service
+    temp_dir = "/tmp"
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav', dir=temp_dir)
     temp_file.write(audio_data)
     temp_file.close()
     return temp_file.name
-
 
 def reset_session_intro(session_id):
     """
