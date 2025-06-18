@@ -6,6 +6,8 @@ import requests
 from app.database import get_session_messages, store_message
 import re
 from difflib import SequenceMatcher
+from pydub import AudioSegment
+import io
 
 
 class BravurCorrector:
@@ -144,11 +146,28 @@ def text_to_speech(text, language="en-US"):
 
 
 def speech_to_text_from_file(audio_path, language=None):
+    try:
+        print(f"--- CONVERTING AUDIO FILE: {audio_path} ---", flush=True)
+        # Load the audio file (webm) and export it as a wav file in memory
+        audio = AudioSegment.from_file(audio_path)
+
+        # Create an in-memory byte stream for the new WAV file
+        wav_io = io.BytesIO()
+        audio.export(wav_io, format="wav")
+        wav_io.seek(0)  # Rewind the stream to the beginning
+
+        print("--- CONVERSION SUCCESSFUL ---", flush=True)
+
+    except Exception as e:
+        print(f"!!!!!! PYDUB CONVERSION FAILED: {e} !!!!!!", flush=True)
+        return {"text": "", "status": "error", "message": "Audio format conversion failed."}
+
+
     speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
 
-    # *** THIS IS THE KEY CHANGE ***
-    # We configure the audio input from the file path we received
-    audio_config = speechsdk.audio.AudioConfig(filename=audio_path)
+
+    # Read from our in-memory WAV byte stream
+    audio_config = speechsdk.audio.AudioConfig(stream=speechsdk.audio.PushAudioInputStream(wav_io.read()))
 
     if language == "nl-NL":
         speech_config_stt.speech_recognition_language = "nl-NL"
