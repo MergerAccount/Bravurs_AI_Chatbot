@@ -3,10 +3,97 @@ let recognition = null;
 let isListening = false;
 let currentAudio = null;
 let isRecording = false;
-let mediaRecorder = null;
-let audioChunks = [];
+let audioContext = null;
 let audioStream = null;
 let selectedLanguage = "nl-NL";
+
+// WAV recording variables
+let audioRecorder = null;
+let audioChunks = [];
+
+// WAV Recorder Class
+class WAVRecorder {
+    constructor(stream, sampleRate = 16000) {
+        this.stream = stream;
+        this.sampleRate = sampleRate;
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+        this.source = this.audioContext.createMediaStreamSource(stream);
+        this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+        this.audioData = [];
+        this.isRecording = false;
+
+        this.processor.onaudioprocess = (event) => {
+            if (this.isRecording) {
+                const inputData = event.inputBuffer.getChannelData(0);
+                this.audioData.push(new Float32Array(inputData));
+            }
+        };
+    }
+
+    start() {
+        this.audioData = [];
+        this.isRecording = true;
+        this.source.connect(this.processor);
+        this.processor.connect(this.audioContext.destination);
+        console.log("WAV recording started");
+    }
+
+    stop() {
+        this.isRecording = false;
+        this.source.disconnect();
+        this.processor.disconnect();
+        console.log("WAV recording stopped");
+        return this.exportWAV();
+    }
+
+    exportWAV() {
+        const length = this.audioData.reduce((acc, chunk) => acc + chunk.length, 0);
+        const result = new Float32Array(length);
+        let offset = 0;
+
+        for (const chunk of this.audioData) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        return this.encodeWAV(result);
+    }
+
+    encodeWAV(samples) {
+        const buffer = new ArrayBuffer(44 + samples.length * 2);
+        const view = new DataView(buffer);
+
+        // WAV header
+        const writeString = (offset, string) => {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        };
+
+        writeString(0, 'RIFF');
+        view.setUint32(4, 36 + samples.length * 2, true);
+        writeString(8, 'WAVE');
+        writeString(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, this.sampleRate, true);
+        view.setUint32(28, this.sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeString(36, 'data');
+        view.setUint32(40, samples.length * 2, true);
+
+        // Convert float samples to 16-bit PCM
+        let offset = 44;
+        for (let i = 0; i < samples.length; i++, offset += 2) {
+            const sample = Math.max(-1, Math.min(1, samples[i]));
+            view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        }
+
+        return new Blob([buffer], { type: 'audio/wav' });
+    }
+}
 
 // Highlight selected smiley and store the rating value
 function selectSmiley(rating) {
@@ -26,6 +113,7 @@ function showFeedback() {
   document.getElementById("feedback-container").style.display = "block";
   document.getElementById("show-feedback-btn").style.display = "none";
 }
+
 function showPolicy(event) {
   event.preventDefault();
     document.getElementById("dropdown-content").innerHTML = `
@@ -37,7 +125,7 @@ function showPolicy(event) {
 function showTerms(event) {
   event.preventDefault();
     document.getElementById("dropdown-content").innerHTML = `
-    <p>If you choose to withdraw your consent, we’ll delete all associated data from our systems. This means we won’t be able to provide you with a personalized experience or retain any preferences you’ve set.</p>
+    <p>If you choose to withdraw your consent, we'll delete all associated data from our systems. This means we won't be able to provide you with a personalized experience or retain any preferences you've set.</p>
   `;
   document.getElementById("dropdown-content-container").style.display = "block";
 }
@@ -393,174 +481,210 @@ function stopSpeechRecognition() {
     }
 }
 
+// WAV RECORDING - NATIVE BROWSER SOLUTION
 const stsButton = document.getElementById("sts-btn");
+stsButton.innerHTML = "🎤 Hold to Talk";
+stsButton.title = "Hold to record WAV, release to send";
 
-stsButton.innerHTML = "🤖";
-stsButton.title = "Use Voice Mode 🤖";
+stsButton.addEventListener("mousedown", startWAVRecording);
+stsButton.addEventListener("mouseup", stopWAVRecording);
+stsButton.addEventListener("mouseleave", stopWAVRecording);
 
-stsButton.addEventListener("click", handleStsButtonClick);
+// Touch events for mobile
+stsButton.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    startWAVRecording();
+});
+stsButton.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    stopWAVRecording();
+});
 
-function handleStsButtonClick() {
-    console.log("Button clicked, current state:", isRecording);
+async function startWAVRecording() {
+    if (isRecording) return;
 
-    if (!isRecording) {
-        startRecordingProcess();
-    } else {
-        stopRecordingProcess();
-    }
-}
+    console.log("Starting WAV recording");
 
-async function startRecordingProcess() {
     try {
-        console.log("Starting recording process");
+        isRecording = true;
+        stsButton.innerHTML = "🔴 Recording WAV...";
+        stsButton.style.backgroundColor = "#ff4444";
 
-        stsButton.innerHTML = "Start Talking";
-        stsButton.title = "Click to start/stop recording";
-
-        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-        mediaRecorder = new MediaRecorder(audioStream, {
-            mimeType: 'audio/webm'
+        // Get microphone with specific constraints for WAV recording
+        audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                sampleRate: 16000,
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true
+            }
         });
 
-        mediaRecorder.ondataavailable = (event) => {
-            audioChunks.push(event.data);
-        };
+        // Create WAV recorder
+        audioRecorder = new WAVRecorder(audioStream, 16000);
+        audioRecorder.start();
 
-        mediaRecorder.onstop = processRecording;
+        console.log("WAV recording started (16kHz, mono)");
 
-        audioChunks = [];
-
-        mediaRecorder.start(100);
-
-        isRecording = true;
-
-        console.log("Recording started successfully");
+        // Visual feedback
+        const chatBox = document.getElementById("chat-box");
+        const recordingMsg = document.createElement("p");
+        recordingMsg.className = "message user-message";
+        recordingMsg.id = "temp-recording-message";
+        recordingMsg.textContent = "🎤 Recording WAV... (release to send)";
+        chatBox.appendChild(recordingMsg);
+        chatBox.scrollTop = chatBox.scrollHeight;
 
     } catch (error) {
-        console.error("Failed to start recording:", error);
-
+        console.error("Failed to start WAV recording:", error);
         isRecording = false;
-        stsButton.innerHTML = "🤖";
-        stsButton.title = "Use Voice Mode 🤖";
-        stsButton.disabled = false;
+        resetVoiceButton();
 
+        const chatBox = document.getElementById("chat-box");
         const errorMsg = document.createElement("p");
         errorMsg.className = "message system-message";
-        errorMsg.textContent = "Unable to access microphone. Please check your permissions and try again.";
-        document.getElementById("chat-box").appendChild(errorMsg);
+        errorMsg.textContent = "Unable to access microphone. Please check permissions.";
+        chatBox.appendChild(errorMsg);
     }
 }
 
-function stopRecordingProcess() {
-    console.log("Stopping recording process");
+function stopWAVRecording() {
+    if (!isRecording || !audioRecorder) return;
 
-    if (mediaRecorder && mediaRecorder.state === "recording") {
-        mediaRecorder.stop();
-    } else {
-        resetUI();
-    }
-}
+    console.log("Stopping WAV recording");
 
-function resetUI() {
-    console.log("Resetting UI");
+    // Stop recording and get WAV blob
+    const wavBlob = audioRecorder.stop();
 
-    isRecording = false;
-
-    stsButton.innerHTML = "🤖";
-    stsButton.title = "Use Voice Mode 🤖";
-    stsButton.disabled = false;
-
+    // Clean up audio stream
     if (audioStream) {
         audioStream.getTracks().forEach(track => track.stop());
         audioStream = null;
     }
 
-    mediaRecorder = null;
+    resetVoiceButton();
+
+    // Process the WAV file
+    processWAVRecording(wavBlob);
 }
 
-async function processRecording() {
+function resetVoiceButton() {
+    isRecording = false;
+    stsButton.innerHTML = "🎤 Hold to Talk";
+    stsButton.style.backgroundColor = "";
+    stsButton.title = "Hold to record WAV, release to send";
+}
+
+async function processWAVRecording(wavBlob) {
+    console.log("Processing WAV recording");
+
     const spinner = document.getElementById("spinner");
-    console.log("Processing recording");
 
     try {
-        const audioBlob = new Blob(audioChunks);
-
-        const formData = new FormData();
-        formData.append('audio', audioBlob, 'input.webm');
-
-        console.log("Current session ID:", currentSessionId);
-        if (currentSessionId) {
-            formData.append('session_id', currentSessionId);
-            console.log("Session ID added to FormData:", currentSessionId);
-        } else {
-            console.error("WARNING: No session ID available!");
+        // Remove recording indicator
+        const recordingMsg = document.getElementById("temp-recording-message");
+        if (recordingMsg) {
+            recordingMsg.remove();
         }
 
+        console.log(`WAV blob: ${wavBlob.size} bytes`);
+
+        if (wavBlob.size < 2000) { // Less than 2KB is probably too short
+            const chatBox = document.getElementById("chat-box");
+            const errorMsg = document.createElement("p");
+            errorMsg.className = "message system-message";
+            errorMsg.textContent = "Recording too short. Please hold the button longer and speak clearly.";
+            chatBox.appendChild(errorMsg);
+            return;
+        }
+
+        // Create form data with WAV file
+        const formData = new FormData();
+        formData.append('audio', wavBlob, 'voice_input.wav');
+        formData.append('session_id', currentSessionId);
         formData.append('language', selectedLanguage);
-        console.log("Sending speech-to-speech request with language:", selectedLanguage);
 
+        console.log("Sending WAV data to server...");
+        console.log(`File: voice_input.wav, Size: ${wavBlob.size}, Language: ${selectedLanguage}`);
+
+        // Show processing indicators
         spinner.style.display = "block";
+        spinner.textContent = "🎤 Processing WAV audio...";
 
-        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-            const placeholderMsg = document.createElement("p");
-            placeholderMsg.className = "message user-message";
-            placeholderMsg.id = "temp-user-message";
-            placeholderMsg.textContent = "Initializing microphone...";
-            document.getElementById("chat-box").appendChild(placeholderMsg);
+        const chatBox = document.getElementById("chat-box");
+        const placeholderMsg = document.createElement("p");
+        placeholderMsg.className = "message user-message";
+        placeholderMsg.id = "temp-user-message";
+        placeholderMsg.textContent = "Processing your voice...";
+        chatBox.appendChild(placeholderMsg);
 
-            showThinkingIndicator();
+        showThinkingIndicator();
 
-             setTimeout(() => {
-                    const tempMsg = document.getElementById("temp-user-message");
-                    if (tempMsg) {
-                        tempMsg.textContent = "Speak now...";
-                    }
-                }, 3000);
-            }
-
+        // Send to server
         const response = await fetch('/api/v1/sts', {
             method: 'POST',
             body: formData
         });
 
+        console.log(`Server response status: ${response.status}`);
+
         if (!response.ok) {
             const errorData = await response.json();
-            throw new Error(`Server responded with status: ${response.status}`);
+            console.error("Server error:", errorData);
+            throw new Error(`Server error: ${response.status} - ${errorData.error || 'Unknown error'}`);
         }
 
         const data = await response.json();
+        console.log("Server response:", data);
 
+        // Hide indicators
         hideThinkingIndicator();
         spinner.style.display = "none";
 
+        // Update user message
         const tempUserMsg = document.getElementById("temp-user-message");
-        if (tempUserMsg) {
+        if (tempUserMsg && data.user_text) {
             tempUserMsg.textContent = data.user_text;
             tempUserMsg.id = "";
-        } else {
-            const userMsg = document.createElement("p");
-            userMsg.className = "message user-message";
-            userMsg.textContent = data.user_text;
-            document.getElementById("chat-box").appendChild(userMsg);
         }
 
-        const container = document.createElement("div");
-        container.className = "bot-message-container";
+        // Add bot response
+        if (data.bot_text) {
+            const container = document.createElement("div");
+            container.className = "bot-message-container";
 
-        const botMsg = document.createElement("p");
-        botMsg.className = "message bot-message";
-        botMsg.textContent = data.bot_text;
+            const botMsg = document.createElement("p");
+            botMsg.className = "message bot-message";
+            botMsg.textContent = data.bot_text;
 
-        const speakButton = document.createElement("button");
-        speakButton.className = "speak-btn";
-        speakButton.innerHTML = "🔊";
-        speakButton.onclick = () => {
-            if (currentAudio) {
-                currentAudio.pause();
-                currentAudio.currentTime = 0;
-            }
+            const speakButton = document.createElement("button");
+            speakButton.className = "speak-btn";
+            speakButton.innerHTML = "🔊";
+            speakButton.onclick = () => {
+                if (currentAudio) {
+                    currentAudio.pause();
+                    currentAudio.currentTime = 0;
+                }
 
+                if (data.audio_base64) {
+                    const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
+                    const audioResponseBlob = new Blob([audioBytes], { type: "audio/wav" });
+                    const audioUrl = URL.createObjectURL(audioResponseBlob);
+                    currentAudio = new Audio(audioUrl);
+                    currentAudio.play();
+
+                    currentAudio.onended = function() {
+                        URL.revokeObjectURL(audioUrl);
+                    };
+                }
+            };
+
+            container.appendChild(botMsg);
+            container.appendChild(speakButton);
+            chatBox.appendChild(container);
+
+            // Auto-play response
             if (data.audio_base64) {
                 const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
                 const audioResponseBlob = new Blob([audioBytes], { type: "audio/wav" });
@@ -572,49 +696,33 @@ async function processRecording() {
                     URL.revokeObjectURL(audioUrl);
                 };
             }
-        };
-
-        container.appendChild(botMsg);
-        container.appendChild(speakButton);
-        document.getElementById("chat-box").appendChild(container);
-
-        document.getElementById("chat-box").scrollTop = document.getElementById("chat-box").scrollHeight;
-
-        if (data.audio_base64) {
-            const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
-            const audioResponseBlob = new Blob([audioBytes], { type: "audio/wav" });
-            const audioUrl = URL.createObjectURL(audioResponseBlob);
-            currentAudio = new Audio(audioUrl);
-            currentAudio.play();
-
-            currentAudio.onended = function() {
-                URL.revokeObjectURL(audioUrl);
-            };
         }
 
+        chatBox.scrollTop = chatBox.scrollHeight;
+
     } catch (error) {
+        console.error("Error processing WAV:", error);
+
         spinner.style.display = "none";
         hideThinkingIndicator();
-        console.error("Error processing speech-to-speech:", error);
 
         const tempUserMsg = document.getElementById("temp-user-message");
         if (tempUserMsg) {
             tempUserMsg.remove();
         }
 
+        const chatBox = document.getElementById("chat-box");
         const errorMsg = document.createElement("p");
         errorMsg.className = "message system-message";
-        errorMsg.textContent = "Sorry, there was an error processing your speech. Please try again.";
-        document.getElementById("chat-box").appendChild(errorMsg);
-    } finally {
-        resetUI();
+        errorMsg.textContent = `Voice processing failed: ${error.message}`;
+        chatBox.appendChild(errorMsg);
     }
 }
 
 window.onload = function () {
     const chatBox = document.getElementById("chat-box");
     chatBox.innerHTML += '<p class="message bot-message">Welcome to Bravur AI Chatbot! How can I help you today?</p>';
-  
+
   document.getElementById("user-input").addEventListener("keydown", function (event) {
     if (event.key === "Enter") {
       event.preventDefault();
@@ -704,4 +812,3 @@ function notifyLanguageChange(fromLang, toLang) {
         chatBox.innerHTML += `<p class="message system-message" style="font-size: 0.8em; color: #999;">Language switched to ${toLang === "nl-NL" ? "Dutch" : "English"}</p>`;
     });
 }
-
