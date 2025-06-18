@@ -214,7 +214,7 @@ def speech_to_text(language=None):
 
 
 def get_chatbot_response(user_text, session_id=None, language=None):
-    url = "http://localhost:5000/api/v1/chat"
+    url = "https://bravur-chatbot-api-bwepc9bna4fvg8fn.westeurope-01.azurewebsites.net/api/v1/chat"
     data = {
         "user_input": user_text,
         "session_id": session_id or ""
