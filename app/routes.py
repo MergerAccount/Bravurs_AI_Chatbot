@@ -171,7 +171,45 @@ def text_to_speech_api():
 
     return Response(generate(), mimetype="audio/wav")
 
-from app.speech import speech_to_text_from_file, save_audio_file
+
+@routes.route("/stt", methods=["POST"])
+def speech_to_text_api():
+    print("--- STT ROUTE HIT ---", flush=True)  # flush=True forces it to print immediately
+
+    if 'audio' not in request.files:
+        print("--- ERROR: NO AUDIO FILE PART IN REQUEST ---", flush=True)
+        return jsonify({"status": "error", "message": "No audio file part"}), 400
+
+    file = request.files['audio']
+    if file.filename == '':
+        print("--- ERROR: NO FILENAME, FILE IS EMPTY ---", flush=True)
+        return jsonify({"status": "error", "message": "No selected file"}), 400
+
+    try:
+        print("--- SAVING AUDIO FILE ---", flush=True)
+        audio_path = save_audio_file(file.read())
+        print(f"--- AUDIO SAVED TO: {audio_path} ---", flush=True)
+
+        language = request.form.get("language")
+        print(f"--- LANGUAGE DETECTED: {language} ---", flush=True)
+
+        print("--- TRANSCRIBING FILE NOW ---", flush=True)
+        result = speech_to_text_from_file(audio_path, language)
+        print(f"--- TRANSCRIPTION RESULT: {result} ---", flush=True)
+
+        print(f"--- REMOVING TEMP FILE: {audio_path} ---", flush=True)
+        os.remove(audio_path)
+        print("--- TEMP FILE REMOVED ---", flush=True)
+
+        print("--- SENDING JSON RESPONSE ---", flush=True)
+        return jsonify(result)
+
+    except Exception as e:
+        # This will now definitely be logged by Gunicorn
+        print(f"!!!!!! CATASTROPHIC ERROR IN STT ROUTE: {e} !!!!!!", flush=True)
+        import traceback
+        traceback.print_exc()  # This prints the full error traceback
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
