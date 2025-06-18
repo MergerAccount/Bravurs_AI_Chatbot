@@ -71,7 +71,7 @@ class BravurCorrector:
     def add_known_misrecognition(self, misrecognition):
         self.exact_corrections[misrecognition.lower()] = "Bravur"
 
-
+        
 load_dotenv()
 
 speech_key = os.getenv("AZURE_SPEECH_KEY")
@@ -143,13 +143,49 @@ def text_to_speech(text, language="en-US"):
         return None
 
 
-def speech_to_text(language=None, audio_file_path=None):
-    """
-    Speech-to-text function that can handle both microphone input (for local testing)
-    and audio file input (for WordPress/Azure deployment)
-    """
+def speech_to_text_from_file(audio_path, language=None):
+    speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+
+    # *** THIS IS THE KEY CHANGE ***
+    # We configure the audio input from the file path we received
+    audio_config = speechsdk.audio.AudioConfig(filename=audio_path)
+
+    if language == "nl-NL":
+        speech_config_stt.speech_recognition_language = "nl-NL"
+    elif language == "en-US":
+        speech_config_stt.speech_recognition_language = "en-US"
+    else:
+        # Default to a language, or handle auto-detection if preferred
+        speech_config_stt.speech_recognition_language = "nl-NL"
+
+    speech_recognizer = speechsdk.SpeechRecognizer(
+        speech_config=speech_config_stt,
+        audio_config=audio_config,
+    )
+
+    try:
+        result = speech_recognizer.recognize_once_async().get()
+
+        if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+            corrected_text = bravur_corrector.correct_text(result.text)
+            return {
+                "text": corrected_text,
+                "status": "success"
+            }
+        elif result.reason == speechsdk.ResultReason.NoMatch:
+            return {"text": "", "status": "error", "message": "No speech was recognized."}
+        else:  # Canceled
+            cancellation_details = result.cancellation_details
+            return {"text": "", "status": "error", "message": f"Recognition canceled: {cancellation_details.reason}"}
+
+    except Exception as e:
+        return {"text": "", "status": "error", "message": f"Recognition exception: {str(e)}"}
+
+
+def speech_to_text(language=None):
     # Create fresh speech config for each call
     speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+    audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
 
     if language == "nl-NL":
         speech_config_stt.speech_recognition_language = "nl-NL"
@@ -160,23 +196,12 @@ def speech_to_text(language=None, audio_file_path=None):
     else:
         speech_config_stt.speech_recognition_language = "nl-NL"  # Default to Dutch
 
-    # Choose audio input method
-    if audio_file_path and os.path.exists(audio_file_path):
-        # Use audio file (for WordPress/web input)
-        print(f"Using audio file: {audio_file_path}")
-        audio_config = speechsdk.audio.AudioConfig(filename=audio_file_path)
-    else:
-        # Use microphone (for local testing only)
-        print("Using default microphone")
-        audio_config = speechsdk.audio.AudioConfig(use_default_microphone=True)
-
     speech_recognizer = speechsdk.SpeechRecognizer(
         speech_config=speech_config_stt,
         audio_config=audio_config,
     )
 
-    if not audio_file_path:
-        print("Speak now...")
+    print("Speak now...")
 
     try:
         result = speech_recognizer.recognize_once_async().get()
@@ -227,10 +252,62 @@ def speech_to_text(language=None, audio_file_path=None):
         }
 
 
-# Also update your speech_to_speech function to pass the audio file
-def speech_to_speech(language=None, session_id=None, audio_file_path=None):
-    """Updated speech_to_speech to handle file input"""
-    stt_result = speech_to_text(language=language, audio_file_path=audio_file_path)
+def get_chatbot_response(user_text, session_id=None, language=None):
+    url = "https://bravur-chatbot-api-bwepc9bna4fvg8fn.westeurope-01.azurewebsites.net/api/v1/chat"
+    data = {
+        "user_input": user_text,
+        "session_id": session_id or ""
+    }
+
+    if language:
+        data["language"] = language
+
+    try:
+        response = requests.post(url, data=data, stream=True)
+        if response.status_code == 200:
+            full_reply = ""
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    full_reply += chunk.decode("utf-8")
+            return full_reply.strip()
+        else:
+            return "Sorry, I couldn't get a response from the chat service."
+    except Exception as e:
+        return f"Error contacting chat service: {str(e)}"
+
+
+def is_first_bot_response_in_session(session_id):
+    """
+    Check if this is the first bot response in the session by looking at message history
+    """
+    if not session_id:
+        print("No session ID provided, treating as first interaction")
+        return True
+
+    try:
+        # Get all messages for this session
+        messages = get_session_messages(session_id)
+        bot_message_count = 0
+
+        for i, message in enumerate(messages):
+            if isinstance(message, tuple) and len(message) >= 4:
+                message_id, content, timestamp, message_type = message[:4]
+
+                if message_type == 'bot':
+                    bot_message_count += 1
+            else:
+                continue
+
+        is_first = bot_message_count == 0
+
+        return is_first
+
+    except Exception as e:
+        return True
+
+
+def speech_to_speech(language=None, session_id=None):
+    stt_result = speech_to_text(language=language)
 
     if stt_result["status"] != "success" or not stt_result["text"]:
         print("No valid speech input detected")
@@ -291,128 +368,13 @@ def speech_to_speech(language=None, session_id=None, audio_file_path=None):
     }
 
 
-def get_chatbot_response(user_text, session_id=None, language=None):
-    url = "http://localhost:5000/api/v1/chat"
-    data = {
-        "user_input": user_text,
-        "session_id": session_id or ""
-    }
-
-    if language:
-        data["language"] = language
-
-    try:
-        response = requests.post(url, data=data, stream=True)
-        if response.status_code == 200:
-            full_reply = ""
-            for chunk in response.iter_content(chunk_size=1024):
-                if chunk:
-                    full_reply += chunk.decode("utf-8")
-            return full_reply.strip()
-        else:
-            return "Sorry, I couldn't get a response from the chat service."
-    except Exception as e:
-        return f"Error contacting chat service: {str(e)}"
-
-
-def is_first_bot_response_in_session(session_id):
-    """
-    Check if this is the first bot response in the session by looking at message history
-    """
-    if not session_id:
-        print("No session ID provided, treating as first interaction")
-        return True
-
-    try:
-        # Get all messages for this session
-        messages = get_session_messages(session_id)
-        bot_message_count = 0
-
-        for i, message in enumerate(messages):
-            if isinstance(message, tuple) and len(message) >= 4:
-                message_id, content, timestamp, message_type = message[:4]
-
-                if message_type == 'bot':
-                    bot_message_count += 1
-            else:
-                continue
-
-        is_first = bot_message_count == 0
-
-        return is_first
-
-    except Exception as e:
-        return True
-
-
-# def speech_to_speech(language=None, session_id=None):
-#     stt_result = speech_to_text(language=language)
-#
-#     if stt_result["status"] != "success" or not stt_result["text"]:
-#         print("No valid speech input detected")
-#         return {
-#             "error": "No valid speech input detected. Please check your microphone and try speaking again.",
-#             "session_id": session_id,
-#             "debug_info": stt_result
-#         }
-#
-#     user_text = stt_result["text"]
-#     print(f"Recognized text: {user_text}")
-#
-#     # Step 2: Determine response language
-#     response_language = language if language else stt_result["language"]
-#     print(f"Using response language: {response_language}")
-#
-#     # Step 3: Validate and ensure we have a session_id
-#     if not session_id:
-#         return {
-#             "error": "No session ID provided",
-#             "session_id": None
-#         }
-#
-#     # Step 4: Store the user message in the database
-#     user_message_id = store_message(session_id, user_text, "user")
-#
-#     # Step 5: Check if this is the first bot response BEFORE getting the response
-#     is_first_interaction = is_first_bot_response_in_session(session_id)
-#     print(f"Is first bot interaction in session: {is_first_interaction}")
-#
-#     # Step 6: Get the chatbot response
-#     response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
-#     print(f"Got response text: {response_text[:50]}...")
-#
-#     # Step 7: Add intro joke only if this is the first bot response in this session
-#     final_response_text = response_text
-#     if is_first_interaction:
-#         if response_language == "nl-NL":
-#             intro = "Neem mijn stem niet te serieus, ik ben ook maar een AI. Maar om je vraag te beantwoorden: "
-#         else:
-#             intro = "Please go easy on my voice, I'm just an AI. But to answer your question: "
-#         final_response_text = intro + response_text
-#
-#     # Step 8: Store the bot response in the database
-#     bot_message_id = store_message(session_id, final_response_text, "bot")
-#
-#     # Step 9: Convert response to speech
-#     tts_output_path = text_to_speech(final_response_text, language=response_language)
-#
-#     # Step 10: Return complete result
-#     return {
-#         "audio_path": tts_output_path,
-#         "original_text": user_text,
-#         "response_text": final_response_text,
-#         "language": response_language,
-#         "session_id": session_id,
-#         "is_first_interaction": is_first_interaction
-#     }
-
-
 def save_audio_file(audio_data):
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
+    # Use a directory that is guaranteed to be writable on Azure App Service
+    temp_dir = "/tmp"
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav', dir=temp_dir)
     temp_file.write(audio_data)
     temp_file.close()
     return temp_file.name
-
 
 def reset_session_intro(session_id):
     """
@@ -485,6 +447,3 @@ def test_azure_speech_setup():
 
     except Exception as e:
         return False
-
-
-

@@ -1,4 +1,6 @@
 import os
+import logging
+import sys
 from flask import Flask, request, jsonify
 from flask import Flask
 from flask import Flask, request, jsonify
@@ -10,6 +12,15 @@ from app.rate_limiter import check_ip_rate_limit
 from app.rate_limiter import check_ip_rate_limit
 
 def create_app():
+    # This forces logging to the console (stdout) which Azure Log Stream can capture.
+    logging.basicConfig(level=logging.INFO)
+    root_logger = logging.getLogger()
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    root_logger.addHandler(handler)
+
     base_dir = os.path.abspath(os.path.dirname(__file__))
     templates_path = os.path.join(base_dir, "..", "static", "templates")
     static_path = os.path.join(base_dir, "..", "static")
