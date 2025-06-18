@@ -143,6 +143,45 @@ def text_to_speech(text, language="en-US"):
         return None
 
 
+def speech_to_text_from_file(audio_path, language=None):
+    speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)
+
+    # *** THIS IS THE KEY CHANGE ***
+    # We configure the audio input from the file path we received
+    audio_config = speechsdk.audio.AudioConfig(filename=audio_path)
+
+    if language == "nl-NL":
+        speech_config_stt.speech_recognition_language = "nl-NL"
+    elif language == "en-US":
+        speech_config_stt.speech_recognition_language = "en-US"
+    else:
+        # Default to a language, or handle auto-detection if preferred
+        speech_config_stt.speech_recognition_language = "nl-NL"
+
+    speech_recognizer = speechsdk.SpeechRecognizer(
+        speech_config=speech_config_stt,
+        audio_config=audio_config,
+    )
+
+    try:
+        result = speech_recognizer.recognize_once_async().get()
+
+        if result.reason == speechsdk.ResultReason.RecognizedSpeech:
+            corrected_text = bravur_corrector.correct_text(result.text)
+            return {
+                "text": corrected_text,
+                "status": "success"
+            }
+        elif result.reason == speechsdk.ResultReason.NoMatch:
+            return {"text": "", "status": "error", "message": "No speech was recognized."}
+        else:  # Canceled
+            cancellation_details = result.cancellation_details
+            return {"text": "", "status": "error", "message": f"Recognition canceled: {cancellation_details.reason}"}
+
+    except Exception as e:
+        return {"text": "", "status": "error", "message": f"Recognition exception: {str(e)}"}
+
+
 def speech_to_text(language=None):
     # Create fresh speech config for each call
     speech_config_stt = speechsdk.SpeechConfig(subscription=speech_key, region=service_region)

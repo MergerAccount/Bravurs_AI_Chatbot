@@ -1,5 +1,6 @@
 import os
 import base64
+from app.speech import speech_to_text_from_file, save_audio_file
 from flask import (
     Blueprint, request, jsonify, Response,
     stream_with_context, render_template, send_file, after_this_request, session
@@ -170,16 +171,7 @@ def text_to_speech_api():
 
     return Response(generate(), mimetype="audio/wav")
 
-@routes.route("/stt", methods=["POST"])
-def speech_to_text_api():
-    """Speech-to-text endpoint for WordPress voice input"""
-    from app.speech import speech_to_text
-
-    data = request.get_json() or {}
-    language = data.get("language")
-
-    result = speech_to_text(language)
-    return jsonify(result)
+from app.speech import speech_to_text_from_file, save_audio_file
 
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
