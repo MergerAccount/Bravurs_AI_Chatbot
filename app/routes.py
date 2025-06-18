@@ -1,6 +1,7 @@
 import os
 import base64
-from app.speech import speech_to_text_from_file, save_audio_file
+from app.speech import speech_to_speech, save_audio_file
+
 from flask import (
     Blueprint, request, jsonify, Response,
     stream_with_context, render_template, send_file, after_this_request, session
