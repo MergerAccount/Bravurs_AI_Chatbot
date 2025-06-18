@@ -9,4 +9,5 @@ echo "--- [startup.sh] ffmpeg installation finished ---"
 
 # Start the Gunicorn server
 echo "--- [startup.sh] Starting Gunicorn server ---"
-gunicorn --bind=0.0.0.0:$PORT --timeout 600 --workers=1 --log-level=debug --error-logfile=- --access-logfile=- run:app
+
+exec gunicorn --bind=0.0.0.0:$PORT --timeout 600 --workers=1 --log-level=debug --error-logfile=- --access-logfile=- run:app
