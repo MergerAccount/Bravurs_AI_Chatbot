@@ -177,19 +177,33 @@ def text_to_speech_api():
     return Response(generate(), mimetype="audio/wav")
 
 
-@routes.route("/sts", methods=["POST"])
-def handle_speech_to_speech():
-    """Speech-to-speech endpoint using REST API"""
+@routes.route("/stt", methods=["POST"])
+def handle_speech_to_text():
+    """Simple speech-to-text endpoint for testing"""
+    print("=" * 60)
+    print("🎤 STT REQUEST RECEIVED")
+    print("=" * 60)
+    
     try:
+        # Log request details
+        print(f"📋 Request Method: {request.method}")
+        print(f"📋 Content-Type: {request.content_type}")
+        print(f"📋 Content-Length: {request.content_length}")
+        print(f"📋 Form Data: {dict(request.form)}")
+        print(f"📋 Files: {list(request.files.keys())}")
+        
         if 'audio' in request.files:
             file = request.files['audio']
+            print(f"📁 Audio File Details:")
+            print(f"   - Filename: {file.filename}")
+            print(f"   - Content-Type: {file.content_type}")
+            
             if file.filename == '':
+                print("❌ No file selected")
                 return jsonify({"error": "No file selected"}), 400
 
-            language = request.form.get('language')
-            session_id = request.form.get('session_id')
-
-            print(f"🎤 Received STS request - Language: {language}, Session: {session_id}")
+            language = request.form.get('language', 'nl-NL')
+            print(f"🌍 Language: {language}")
 
             # Save uploaded file temporarily
             import tempfile
@@ -197,9 +211,21 @@ def handle_speech_to_speech():
             file.save(temp_file.name)
             temp_file.close()
 
-            print(f"💾 File saved: {temp_file.name} ({os.path.getsize(temp_file.name)} bytes)")
+            file_size = os.path.getsize(temp_file.name)
+            print(f"💾 File saved: {temp_file.name}")
+            print(f"💾 File size: {file_size} bytes")
+            
+            # Check if file is not empty
+            if file_size == 0:
+                print("❌ Audio file is empty!")
+                os.unlink(temp_file.name)
+                return jsonify({
+                    "error": "Empty audio file",
+                    "message": "The recorded audio file is empty."
+                }), 400
 
             # Process speech-to-text
+            print("🔍 Starting STT processing...")
             from app.speech import speech_to_text_from_file_rest
             stt_result = speech_to_text_from_file_rest(temp_file.name, language=language)
             print(f"📝 STT Result: {stt_result}")
@@ -207,28 +233,96 @@ def handle_speech_to_speech():
             # Clean up temp file
             try:
                 os.unlink(temp_file.name)
+                print("🗑️ Temp file cleaned up")
             except Exception as e:
                 print(f"⚠️ Error removing temp file: {e}")
 
+            print("✅ STT request completed")
+            print("=" * 60)
+            return jsonify(stt_result)
+
+        else:
+            print("❌ No audio file in request")
+            return jsonify({
+                "error": "No audio file",
+                "message": "No audio file received."
+            }), 422
+
+    except Exception as e:
+        print(f"❌ Error in STT: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print("=" * 60)
+        return jsonify({"error": str(e)}), 500
+
+
+@routes.route("/sts", methods=["POST"])
+def handle_speech_to_speech():
+    """Speech-to-speech endpoint using REST API"""
+    print("🎤 Speech-to-Speech Request")
+    
+    try:
+        if 'audio' in request.files:
+            file = request.files['audio']
+            
+            if file.filename == '':
+                print("❌ No file selected")
+                return jsonify({"error": "No file selected"}), 400
+
+            language = request.form.get('language')
+            session_id = request.form.get('session_id')
+            fingerprint = request.form.get('fingerprint')
+
+            # Save uploaded file temporarily
+            import tempfile
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.webm')
+            file.save(temp_file.name)
+            temp_file.close()
+
+            file_size = os.path.getsize(temp_file.name)
+            
+            # Check if file is not empty
+            if file_size == 0:
+                print("❌ Audio file is empty!")
+                os.unlink(temp_file.name)
+                return jsonify({
+                    "error": "Empty audio file",
+                    "message": "The recorded audio file is empty. Please try speaking more clearly."
+                }), 400
+
+            # Process speech-to-text
+            from app.speech import speech_to_text_from_file_rest
+            stt_result = speech_to_text_from_file_rest(temp_file.name, language=language)
+
+            # Clean up temp file
+            try:
+                os.unlink(temp_file.name)
+            except Exception as e:
+                pass
+
             if stt_result["status"] != "success" or not stt_result["text"]:
+                print(f"❌ Speech recognition failed")
                 return jsonify({
                     "error": "No valid speech detected",
-                    "message": "Could not detect speech in audio. Please speak more clearly."
+                    "message": stt_result.get("message", "Could not detect speech in audio. Please speak more clearly."),
+                    "debug_info": stt_result
                 }), 400
 
             user_text = stt_result["text"]
-            print(f"✅ Recognized: '{user_text}'")
+            print(f"👤 User said: '{user_text}'")
 
             if not session_id:
+                print("❌ No session ID provided")
                 return jsonify({"error": "No session ID provided"}), 400
 
             # Store user message
             store_message(session_id, user_text, "user")
 
-            # Get chatbot response using the original HTTP method (but with timeout)
+            # Get chatbot response
             from app.speech import get_chatbot_response, is_first_bot_response_in_session
 
             is_first_interaction = is_first_bot_response_in_session(session_id)
+            
             response_text = get_chatbot_response(user_text, session_id=session_id, language=language)
 
             # Add intro if first interaction
@@ -243,36 +337,46 @@ def handle_speech_to_speech():
             # Store bot response
             store_message(session_id, final_response_text, "bot")
 
+            print(f"🤖 Bot responded: '{final_response_text}'")
+
             # Generate speech
             from app.speech import text_to_speech_rest
             tts_output_path = text_to_speech_rest(final_response_text, language=language)
 
             if not tts_output_path:
+                print("❌ TTS generation failed")
                 return jsonify({"error": "Failed to generate speech response"}), 500
 
             # Read and encode audio
             try:
                 with open(tts_output_path, "rb") as f:
-                    audio_base64 = base64.b64encode(f.read()).decode("utf-8")
+                    audio_data = f.read()
+                    audio_base64 = base64.b64encode(audio_data).decode("utf-8")
 
                 # Clean up generated audio file
                 try:
                     os.remove(tts_output_path)
                 except Exception as e:
-                    print(f"Error removing generated audio file: {e}")
+                    pass
 
-                return jsonify({
+                response_data = {
                     "user_text": user_text,
                     "bot_text": final_response_text,
                     "audio_base64": audio_base64,
                     "language": language,
                     "session_id": session_id,
                     "is_first_interaction": is_first_interaction
-                })
+                }
+                
+                print("✅ Speech-to-speech completed")
+                return jsonify(response_data)
+                
             except Exception as e:
+                print(f"❌ Error processing audio output: {str(e)}")
                 return jsonify({"error": f"Failed to process audio output: {str(e)}"}), 500
 
         else:
+            print("❌ No audio file in request")
             return jsonify({
                 "error": "microphone_not_available",
                 "message": "No audio file received. Please check microphone permissions."

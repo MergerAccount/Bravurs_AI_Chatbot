@@ -11,22 +11,60 @@ Before you begin, ensure you have the following installed:
 - [Python 3.x](https://www.python.org/downloads/)
 - [PyCharm (optional)](https://www.jetbrains.com/pycharm/) – or any Python IDE
 - [Node.js](https://nodejs.org/) – required for Git hooks via Husky and CommitLint
+- **ffmpeg** – required for audio processing (see installation instructions below)
+
+### Installing ffmpeg
+
+**macOS (using Homebrew):**
+
+```bash
+brew install ffmpeg
+```
+
+**Ubuntu/Debian:**
+
+```bash
+sudo apt update
+sudo apt install ffmpeg
+```
+
+**Windows:**
+
+1. Download from [ffmpeg.org](https://ffmpeg.org/download.html)
+2. Extract to a folder (e.g., `C:\ffmpeg`)
+3. Add `C:\ffmpeg\bin` to your system PATH
+
+**Verify installation:**
+
+```bash
+ffmpeg -version
+```
 
 ---
 
 ## 📥 Clone the Repository
+
 ```bash
 git clone https://github.com/MergerAccount/Bravurs_AI_Chatbot.git
 cd Bravurs_AI_Chatbot
 ```
 
+## 🔧 Quick Setup Check
+
+Run the setup script to check if all dependencies are installed:
+
+```bash
+python setup.py
+```
+
+This will verify that ffmpeg is installed and provide installation instructions if needed.
 
 ## 🔐 Add the .env File
 
 This project uses environment variables to store sensitive information like API keys and database connection details.
 
 Locate the file:
-The .env file is available in the shared deliverables folder on Microsoft Teams. Ask the team leader if you can’t find it.
+The .env file is available in the shared deliverables folder on Microsoft Teams. Ask the team leader if you can't find it.
 
 Copy it to your project root:
 Drag and drop the .env file into the root of the cloned Bravurs_AI_Chatbot directory — the same folder you ran the cd command in above.
@@ -41,7 +79,6 @@ Drag and drop the .env file into the root of the cloned Bravurs_AI_Chatbot direc
 
 ⚠️ The .env file is not tracked in Git, so each developer must add it manually.
 
-
 ## 🐍 Create and Activate a Virtual Environment
 
 ### Step 1
@@ -54,21 +91,21 @@ Or: If PyCharm prompts you to create an interpreter using requirements.txt, clic
 
 ### Step 2
 
-
 On Windows:
+
 ```bash
 venv\Scripts\activate
 ```
 
 On macOS/Linux:
+
 ```bash
 source venv/bin/activate
 ```
 
-
 ### Install Python Dependencis
 
-```bash 
+```bash
 pip install -r requirements.txt
 ```
 
@@ -80,7 +117,8 @@ This will install Husky and configure the Git hooks automatically.
 python run.py
 ```
 
-# 🧪 Testing 
+# 🧪 Testing
+
 You can test the backend independently by visiting an endpoint in the browser or using tools like Postman or curl:
 
 ```bash

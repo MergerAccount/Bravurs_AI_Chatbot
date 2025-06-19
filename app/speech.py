@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 from app.database import get_session_messages, store_message
 import re
 from difflib import SequenceMatcher
+import base64
+import subprocess
 
 
 class BravurCorrector:
@@ -120,7 +122,6 @@ def text_to_speech_rest(text, language="en-US"):
         token_response.raise_for_status()
         access_token = token_response.text
     except Exception as e:
-        print(f"Error getting access token: {e}")
         return None
 
     # Create SSML
@@ -148,19 +149,84 @@ def text_to_speech_rest(text, language="en-US"):
         temp_file.write(response.content)
         temp_file.close()
 
-        print("Speech synthesized successfully using REST API!")
-        print(f"Original text: {text[:50]}...")
-        print(f"Clean text for TTS: {clean_text[:50]}...")
         return temp_file.name
 
     except Exception as e:
-        print(f"Error in TTS REST API: {e}")
         return None
+
+
+def convert_webm_to_wav(webm_file_path):
+    """Convert WebM file to WAV format using ffmpeg"""
+    try:
+        # Create temporary WAV file
+        wav_file_path = webm_file_path.replace('.webm', '.wav')
+        
+        # Use ffmpeg to convert
+        cmd = [
+            'ffmpeg', '-i', webm_file_path,
+            '-acodec', 'pcm_s16le',
+            '-ar', '16000',
+            '-ac', '1',
+            '-y',  # Overwrite output file
+            wav_file_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            return wav_file_path
+        else:
+            return None
+            
+    except Exception as e:
+        return None
+
+
+def analyze_audio_file(audio_file_path):
+    """Analyze audio file format and properties"""
+    try:
+        with open(audio_file_path, 'rb') as f:
+            data = f.read()
+        
+        # Check for common audio formats
+        if data.startswith(b'RIFF'):
+            return 'wav'
+        elif data.startswith(b'\x1aE\xdf\xa3') or data.startswith(b'E\xdf\xa3'):
+            return 'webm'
+        elif data.startswith(b'ID3') or data.startswith(b'\xff\xfb'):
+            return 'mp3'
+        elif data.startswith(b'OggS'):
+            return 'ogg'
+        else:
+            return 'unknown'
+            
+    except Exception as e:
+        return 'error'
+
+
+def analyze_audio_content(audio_file_path):
+    """Analyze if the audio file contains actual audio data"""
+    try:
+        with open(audio_file_path, 'rb') as f:
+            data = f.read()
+        
+        # Check for silence or empty audio
+        # If most bytes are 0 or very small values, it might be silence
+        non_zero_bytes = sum(1 for b in data if b > 10)
+        
+        if non_zero_bytes < len(data) * 0.1:
+            return False  # Very few non-zero bytes - possible silence or corrupted audio
+        elif non_zero_bytes < len(data) * 0.3:
+            return False  # Low audio activity - possible very quiet recording
+        else:
+            return True  # Good audio activity detected
+        
+    except Exception as e:
+        return False
 
 
 def speech_to_text_from_file_rest(audio_file_path, language=None):
     """Speech-to-text from file using Azure REST API"""
-
     # Get access token
     token_url = f"https://{service_region}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
     headers = {
@@ -169,10 +235,13 @@ def speech_to_text_from_file_rest(audio_file_path, language=None):
 
     try:
         token_response = requests.post(token_url, headers=headers)
+        
+        if token_response.status_code != 200:
+            return {"text": "", "status": "error", "message": f"Token error: {token_response.status_code} - {token_response.text}"}
+        
         token_response.raise_for_status()
         access_token = token_response.text
     except Exception as e:
-        print(f"Error getting access token: {e}")
         return {"text": "", "status": "error", "message": f"Token error: {str(e)}"}
 
     # Set language
@@ -183,10 +252,36 @@ def speech_to_text_from_file_rest(audio_file_path, language=None):
     else:
         recognition_language = "nl-NL"  # Default to Dutch
 
-    # Read audio file
+    # Read audio file and determine format
     try:
         with open(audio_file_path, 'rb') as audio_file:
             audio_data = audio_file.read()
+        
+        # Check if audio data is not empty
+        if len(audio_data) == 0:
+            return {"text": "", "status": "error", "message": "Audio file is empty"}
+            
+        # Analyze the audio file format
+        file_format = analyze_audio_file(audio_file_path)
+        
+        # Handle different formats
+        if file_format == 'wav':
+            content_type = 'audio/wav; codecs=audio/pcm; samplerate=16000'
+        elif file_format == 'webm':
+            # Save debug copy
+            save_audio_for_debug(audio_file_path, "debug")
+            
+            # Try sending WebM directly to Azure first
+            content_type = 'audio/webm; codecs=opus'
+            
+            # Store original audio data for fallback
+            original_audio_data = audio_data
+            original_content_type = content_type
+        elif file_format == 'unknown':
+            content_type = 'audio/webm; codecs=opus'
+        else:
+            content_type = 'audio/webm; codecs=opus'
+        
     except Exception as e:
         return {"text": "", "status": "error", "message": f"File read error: {str(e)}"}
 
@@ -198,35 +293,105 @@ def speech_to_text_from_file_rest(audio_file_path, language=None):
     }
     headers = {
         'Authorization': f'Bearer {access_token}',
-        'Content-Type': 'audio/wav; codecs=audio/pcm; samplerate=16000',
+        'Content-Type': content_type,
         'Accept': 'application/json'
     }
 
     try:
         response = requests.post(stt_url, headers=headers, params=params, data=audio_data)
+        
+        if response.status_code != 200:
+            # If WebM failed, try different content types
+            if content_type == 'audio/webm; codecs=opus' and file_format == 'webm':
+                # Try without codec specification
+                headers['Content-Type'] = 'audio/webm'
+                response = requests.post(stt_url, headers=headers, params=params, data=audio_data)
+                
+                if response.status_code != 200:
+                    # Try with vorbis codec
+                    headers['Content-Type'] = 'audio/webm; codecs=vorbis'
+                    response = requests.post(stt_url, headers=headers, params=params, data=audio_data)
+                    
+                    if response.status_code != 200:
+                        return {"text": "", "status": "error", "message": f"STT API error: {response.status_code} - {response.text}"}
+            
+            return {"text": "", "status": "error", "message": f"STT API error: {response.status_code} - {response.text}"}
+        
         response.raise_for_status()
         result = response.json()
 
-        print(f"STT REST API response: {result}")
-
-        # Parse response
         if result.get('RecognitionStatus') == 'Success':
+            # Try multiple fields for recognized text
             recognized_text = result.get('DisplayText', '')
+            
+            # If DisplayText is empty, try other fields
+            if not recognized_text:
+                nbest = result.get('NBest', [])
+                if nbest:
+                    # Try Display field first
+                    recognized_text = nbest[0].get('Display', '')
+                    
+                    # If still empty, try Lexical field
+                    if not recognized_text:
+                        recognized_text = nbest[0].get('Lexical', '')
+                    
+                    # If still empty, try ITN field
+                    if not recognized_text:
+                        recognized_text = nbest[0].get('ITN', '')
+            
             if recognized_text:
                 # Apply Bravur correction
                 corrected_text = bravur_corrector.correct_text(recognized_text)
+                
                 return {
                     "text": corrected_text,
                     "status": "success"
                 }
             else:
-                return {"text": "", "status": "error", "message": "No speech recognized"}
+                # If WebM failed and we have a WebM file, try repair
+                if file_format == 'webm' and 'original_audio_data' in locals():
+                    repaired_wav_path = try_repair_webm(audio_file_path)
+                    
+                    if repaired_wav_path:
+                        with open(repaired_wav_path, 'rb') as wav_file:
+                            audio_data = wav_file.read()
+                        content_type = 'audio/wav; codecs=audio/pcm; samplerate=16000'
+                        
+                        # Retry with repaired WAV
+                        headers['Content-Type'] = content_type
+                        response = requests.post(stt_url, headers=headers, params=params, data=audio_data)
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            
+                            if result.get('RecognitionStatus') == 'Success':
+                                recognized_text = result.get('DisplayText', '')
+                                if recognized_text:
+                                    corrected_text = bravur_corrector.correct_text(recognized_text)
+                                    
+                                    # Clean up repaired file
+                                    try:
+                                        os.remove(repaired_wav_path)
+                                    except:
+                                        pass
+                                    
+                                    return {
+                                        "text": corrected_text,
+                                        "status": "success"
+                                    }
+                        
+                        # Clean up repaired file
+                        try:
+                            os.remove(repaired_wav_path)
+                        except:
+                            pass
+                
+                return {"text": "", "status": "error", "message": "No speech detected"}
         else:
             return {"text": "", "status": "error", "message": f"Recognition failed: {result.get('RecognitionStatus')}"}
-
+            
     except Exception as e:
-        print(f"Error in STT REST API: {e}")
-        return {"text": "", "status": "error", "message": f"STT API error: {str(e)}"}
+        return {"text": "", "status": "error", "message": f"STT request error: {str(e)}"}
 
 
 # Legacy functions for compatibility
@@ -330,7 +495,6 @@ def speech_to_speech_from_file_rest(audio_file_path, language=None, session_id=N
     stt_result = speech_to_text_from_file_rest(audio_file_path, language=language)
 
     if stt_result["status"] != "success" or not stt_result["text"]:
-        print("No valid speech input detected in file")
         return {
             "error": "No valid speech input detected in the audio file.",
             "session_id": session_id,
@@ -338,10 +502,8 @@ def speech_to_speech_from_file_rest(audio_file_path, language=None, session_id=N
         }
 
     user_text = stt_result["text"]
-    print(f"Recognized text: {user_text}")
 
     response_language = language if language else "nl-NL"
-    print(f"Using response language: {response_language}")
 
     if not session_id:
         return {
@@ -354,11 +516,9 @@ def speech_to_speech_from_file_rest(audio_file_path, language=None, session_id=N
 
     # Check if this is the first bot response
     is_first_interaction = is_first_bot_response_in_session(session_id)
-    print(f"Is first bot interaction in session: {is_first_interaction}")
 
     # Get the chatbot response
     response_text = get_chatbot_response(user_text, session_id=session_id, language=response_language)
-    print(f"Got response text: {response_text[:50]}...")
 
     # Add intro joke only if this is the first bot response in this session
     final_response_text = response_text
@@ -464,3 +624,49 @@ def test_azure_speech_setup():
     except Exception as e:
         print(f"REST API test failed: {e}")
         return False
+
+
+def save_audio_for_debug(audio_file_path, session_id):
+    """Save a copy of the audio file for manual inspection"""
+    try:
+        import shutil
+        debug_dir = "debug_audio"
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
+        
+        debug_file = os.path.join(debug_dir, f"session_{session_id}_{os.path.basename(audio_file_path)}")
+        shutil.copy2(audio_file_path, debug_file)
+        return debug_file
+    except Exception as e:
+        return None
+
+
+def try_repair_webm(webm_file_path):
+    """Try to repair corrupted WebM file using different approaches"""
+    try:
+        # Try different ffmpeg approaches
+        approaches = [
+            # Approach 1: Force format detection
+            ['ffmpeg', '-f', 'webm', '-i', webm_file_path, '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y'],
+            # Approach 2: Ignore errors and continue
+            ['ffmpeg', '-i', webm_file_path, '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y', '-err_detect', 'ignore_err'],
+            # Approach 3: Force matroska format
+            ['ffmpeg', '-f', 'matroska', '-i', webm_file_path, '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', '-y'],
+        ]
+        
+        for i, cmd in enumerate(approaches):
+            wav_file_path = webm_file_path.replace('.webm', f'_repaired_{i}.wav')
+            cmd.append(wav_file_path)
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0 and os.path.exists(wav_file_path):
+                return wav_file_path
+            else:
+                if os.path.exists(wav_file_path):
+                    os.remove(wav_file_path)
+        
+        return None
+        
+    except Exception as e:
+        return None
