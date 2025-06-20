@@ -144,16 +144,22 @@ def captcha_solved():
 # === LANGUAGE ROUTE ===
 @routes.route("/language_change", methods=["POST"])
 def language_change():
-    session_id = request.form.get("session_id")
-    language = request.form.get("language")
-    from_language = request.form.get("from_language")
-    to_language = request.form.get("to_language")
+    if request.content_type and 'application/json' in request.content_type:
+        data = request.get_json()
+        session_id = data.get("session_id")
+        from_language = data.get("from_language")
+        to_language = data.get("to_language")
+    else:
+        session_id = request.form.get("session_id")
+        from_language = request.form.get("from_language")
+        to_language = request.form.get("to_language")
+
     if session_id:
         language_message = f"[SYSTEM] Language changed from {from_language} to {to_language}. All responses should now be in {'Dutch' if to_language == 'nl-NL' else 'English'}."
         store_message(session_id, language_message, "system")
         return jsonify({"status": "success"})
-    return jsonify({"status": "error", "message": "No session ID provided"}), 400
 
+    return jsonify({"status": "error", "message": "No session ID provided"}), 400
 
 # === SPEECH ROUTES ===
 @routes.route("/tts", methods=["POST"])
@@ -181,6 +187,10 @@ def text_to_speech_api():
 @routes.route("/sts", methods=["POST"])
 def handle_speech_to_speech():
     """Speech-to-speech endpoint using REST API"""
+    print(f"[DEBUG] request.content_type = {request.content_type}")
+    print(f"[DEBUG] request.files = {request.files}")
+    print(f"[DEBUG] request.form = {request.form}")
+
     try:
         if 'audio' in request.files:
             file = request.files['audio']
@@ -281,6 +291,55 @@ def handle_speech_to_speech():
 
     except Exception as e:
         print(f"❌ Error in speech-to-speech: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@routes.route("/stt", methods=["POST"])
+def handle_speech_to_text():
+    """Speech-to-text endpoint only"""
+    try:
+        if 'audio' not in request.files:
+            print("🛑 No audio key found in request.files")
+            return jsonify({
+                "error": "microphone_not_available",
+                "message": "No audio file received. Please check microphone permissions."
+            }), 422
+
+        file = request.files['audio']
+        if file.filename == '':
+            return jsonify({"error": "No file selected"}), 400
+
+        language = request.form.get('language', 'en-US')
+
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.webm')
+        file.save(temp_file.name)
+        temp_file.close()
+
+        from app.speech import speech_to_text_from_file_rest
+        stt_result = speech_to_text_from_file_rest(temp_file.name, language=language)
+
+        try:
+            os.unlink(temp_file.name)
+        except Exception as e:
+            print(f"⚠️ Error removing temp file: {e}")
+
+        if stt_result["status"] != "success" or not stt_result["text"]:
+            return jsonify({
+                "error": "No valid speech detected",
+                "message": "Could not detect speech in audio. Please speak more clearly."
+            }), 400
+
+        return jsonify({
+            "status": "success",
+            "text": stt_result["text"],
+            "language": language
+        })
+
+    except Exception as e:
+        print(f"❌ STT Error: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500

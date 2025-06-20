@@ -421,51 +421,40 @@ function loadMessageHistory() {
     });
 }
 
-document.getElementById("voice-chat-btn").addEventListener("click", function() {
+document.getElementById("voice-chat-btn").addEventListener("click", async function () {
     if (isListening) {
         stopSpeechRecognition();
         return;
     }
 
-    isListening = true;
-    const voiceChatBtn = document.getElementById("voice-chat-btn");
-    voiceChatBtn.textContent = "🎙️ Listening...";
-    voiceChatBtn.classList.add("listening");
+    try {
+        isListening = true;
+        const voiceChatBtn = document.getElementById("voice-chat-btn");
+        voiceChatBtn.textContent = "🎙️ Listening...";
+        voiceChatBtn.classList.add("listening");
 
-    console.log("Using language for speech recognition:", selectedLanguage);
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const recorder = new WAVRecorder(stream);
+        recorder.start();
 
-     const languageToSend = selectedLanguage === "nl-NL" ? "nl-NL" : "en-US";
+        setTimeout(async () => {
+            const wavBlob = recorder.stop();
+            stream.getTracks().forEach(t => t.stop());
+            voiceChatBtn.textContent = "🎤";
+            voiceChatBtn.classList.remove("listening");
+            isListening = false;
 
-    fetch("/api/v1/stt", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            language: selectedLanguage
-        })
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.status === "success" && result.text) {
-            document.getElementById("user-input").value = result.text;
+            // 🔁 Call STT version of processWAVRecording
+            await processWAVRecording(wavBlob, "/api/v1/sts");
 
-            setTimeout(() => {
-                sendMessage();
-            }, 500);
-        } else {
-            console.error("Speech recognition failed:", result.message || "Unknown error");
-            alert("Speech recognition failed: " + (result.message || "Unknown error"));
-        }
-    })
-    .catch(error => {
-        console.error("Speech recognition error:", error);
-        alert("Speech recognition error. Please try again.");
-    })
-    .finally(() => {
+        }, 5000); // 5s max recording
+    } catch (error) {
+        console.error("Microphone access failed:", error);
+        alert("Failed to access microphone.");
         stopSpeechRecognition();
-    });
+    }
 });
+
 
 function stopSpeechRecognition() {
     isListening = false;
@@ -489,6 +478,8 @@ stsButton.title = "Hold to record WAV, release to send";
 stsButton.addEventListener("mousedown", startWAVRecording);
 stsButton.addEventListener("mouseup", stopWAVRecording);
 stsButton.addEventListener("mouseleave", stopWAVRecording);
+console.log("✅ Event listeners attached to stsButton:", stsButton);
+
 
 // Touch events for mobile
 stsButton.addEventListener("touchstart", (e) => {
@@ -550,6 +541,8 @@ async function startWAVRecording() {
 }
 
 function stopWAVRecording() {
+    console.log("🟢 stopWAVRecording triggered — Dictate button released");
+
     if (!isRecording || !audioRecorder) return;
 
     console.log("Stopping WAV recording");
@@ -565,8 +558,11 @@ function stopWAVRecording() {
 
     resetVoiceButton();
 
+    console.log("✅ Calling processWAVRecording from stopWAVRecording");
+
+
     // Process the WAV file
-    processWAVRecording(wavBlob);
+    processWAVRecording(wavBlob, "/api/v1/sts");
 }
 
 function resetVoiceButton() {
@@ -576,21 +572,16 @@ function resetVoiceButton() {
     stsButton.title = "Hold to record WAV, release to send";
 }
 
-async function processWAVRecording(wavBlob) {
-    console.log("Processing WAV recording");
+async function processWAVRecording(wavBlob, endpoint = "/api/v1/sts") {
+    console.log("Processing WAV recording for:", endpoint);
 
     const spinner = document.getElementById("spinner");
 
     try {
-        // Remove recording indicator
         const recordingMsg = document.getElementById("temp-recording-message");
-        if (recordingMsg) {
-            recordingMsg.remove();
-        }
+        if (recordingMsg) recordingMsg.remove();
 
-        console.log(`WAV blob: ${wavBlob.size} bytes`);
-
-        if (wavBlob.size < 2000) { // Less than 2KB is probably too short
+        if (wavBlob.size < 2000) {
             const chatBox = document.getElementById("chat-box");
             const errorMsg = document.createElement("p");
             errorMsg.className = "message system-message";
@@ -599,16 +590,11 @@ async function processWAVRecording(wavBlob) {
             return;
         }
 
-        // Create form data with WAV file
         const formData = new FormData();
         formData.append('audio', wavBlob, 'voice_input.wav');
         formData.append('session_id', currentSessionId);
         formData.append('language', selectedLanguage);
 
-        console.log("Sending WAV data to server...");
-        console.log(`File: voice_input.wav, Size: ${wavBlob.size}, Language: ${selectedLanguage}`);
-
-        // Show processing indicators
         spinner.style.display = "block";
         spinner.textContent = "🎤 Processing WAV audio...";
 
@@ -621,35 +607,43 @@ async function processWAVRecording(wavBlob) {
 
         showThinkingIndicator();
 
-        // Send to server
-        const response = await fetch('/api/v1/sts', {
+        console.log("📤 Sending FormData to:", endpoint);
+        console.log("🔊 Blob type:", wavBlob.type); // should be "audio/wav"
+        console.log("🔊 Blob size:", wavBlob.size); // should be > 2000
+
+        for (let [key, val] of formData.entries()) {
+            console.log("🧾 FormData entry:", key, val);
+        }
+
+        const response = await fetch(endpoint, {
             method: 'POST',
             body: formData
         });
 
-        console.log(`Server response status: ${response.status}`);
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            console.error("Server error:", errorData);
-            throw new Error(`Server error: ${response.status} - ${errorData.error || 'Unknown error'}`);
-        }
-
         const data = await response.json();
-        console.log("Server response:", data);
-
-        // Hide indicators
         hideThinkingIndicator();
         spinner.style.display = "none";
 
-        // Update user message
+        if (!response.ok) {
+            throw new Error(data.error || `Failed with status ${response.status}`);
+        }
+
+        if (endpoint === "/api/v1/stt") {
+            // Only STT: insert recognized text into input field
+            const inputField = document.getElementById("user-input");
+            inputField.value = data.text || '';
+            const tempUserMsg = document.getElementById("temp-user-message");
+            if (tempUserMsg) tempUserMsg.remove();
+            return;
+        }
+
+        // STS logic: show user + bot messages, play audio, etc.
         const tempUserMsg = document.getElementById("temp-user-message");
         if (tempUserMsg && data.user_text) {
             tempUserMsg.textContent = data.user_text;
             tempUserMsg.id = "";
         }
 
-        // Add bot response
         if (data.bot_text) {
             const container = document.createElement("div");
             container.className = "bot-message-container";
@@ -666,17 +660,13 @@ async function processWAVRecording(wavBlob) {
                     currentAudio.pause();
                     currentAudio.currentTime = 0;
                 }
-
                 if (data.audio_base64) {
                     const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
-                    const audioResponseBlob = new Blob([audioBytes], { type: "audio/wav" });
-                    const audioUrl = URL.createObjectURL(audioResponseBlob);
+                    const audioBlob = new Blob([audioBytes], { type: "audio/wav" });
+                    const audioUrl = URL.createObjectURL(audioBlob);
                     currentAudio = new Audio(audioUrl);
                     currentAudio.play();
-
-                    currentAudio.onended = function() {
-                        URL.revokeObjectURL(audioUrl);
-                    };
+                    currentAudio.onended = () => URL.revokeObjectURL(audioUrl);
                 }
             };
 
@@ -684,32 +674,25 @@ async function processWAVRecording(wavBlob) {
             container.appendChild(speakButton);
             chatBox.appendChild(container);
 
-            // Auto-play response
             if (data.audio_base64) {
                 const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
-                const audioResponseBlob = new Blob([audioBytes], { type: "audio/wav" });
-                const audioUrl = URL.createObjectURL(audioResponseBlob);
+                const audioBlob = new Blob([audioBytes], { type: "audio/wav" });
+                const audioUrl = URL.createObjectURL(audioBlob);
                 currentAudio = new Audio(audioUrl);
                 currentAudio.play();
-
-                currentAudio.onended = function() {
-                    URL.revokeObjectURL(audioUrl);
-                };
+                currentAudio.onended = () => URL.revokeObjectURL(audioUrl);
             }
         }
 
         chatBox.scrollTop = chatBox.scrollHeight;
 
     } catch (error) {
-        console.error("Error processing WAV:", error);
-
+        console.error("WAV processing failed:", error);
         spinner.style.display = "none";
         hideThinkingIndicator();
 
         const tempUserMsg = document.getElementById("temp-user-message");
-        if (tempUserMsg) {
-            tempUserMsg.remove();
-        }
+        if (tempUserMsg) tempUserMsg.remove();
 
         const chatBox = document.getElementById("chat-box");
         const errorMsg = document.createElement("p");
@@ -718,6 +701,7 @@ async function processWAVRecording(wavBlob) {
         chatBox.appendChild(errorMsg);
     }
 }
+
 
 window.onload = function () {
     const chatBox = document.getElementById("chat-box");
